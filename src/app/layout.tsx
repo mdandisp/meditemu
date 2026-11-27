@@ -24,9 +24,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MediTemu — Sistem Temu Kembali Informasi Gejala Medis (Boolean & VSM TF-IDF)",
+  title: "MediTemu",
   description:
-    "MediTemu: Sistem Temu Kembali Informasi Gejala Medis Edukatif menggunakan Boolean Retrieval, Vector Space Model (TF-IDF & Cosine Similarity), dan Okapi BM25 pada 135 dokumen resmi MedlinePlus (NIH/NLM)."
+    "MediTemu — Platform Temu Kembali Informasi Gejala Medis Edukatif menggunakan Vector Space Model (TF-IDF & Cosine Similarity), Boolean Retrieval, dan Okapi BM25 berbasis 135 topik resmi MedlinePlus (NIH/NLM)."
 };
 
 export default function RootLayout({

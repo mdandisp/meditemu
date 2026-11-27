@@ -2,13 +2,12 @@
 
 import React, { useMemo, useState } from "react";
 import { inspectPreprocessingSteps } from "@/lib/preprocessing";
-import type { CorpusStats, MedicalDocument, UrgencyLevel } from "@/lib/types";
+import type { MedicalDocument, UrgencyLevel } from "@/lib/types";
 import { AlertCircleIcon, AlertTriangleIcon, CheckCircleIcon, ExternalLinkIcon } from "./Icons";
 
 interface CorpusExplorerProps {
   documents: MedicalDocument[];
   categories: string[];
-  stats: CorpusStats;
   initialDocId?: string;
 }
 
@@ -40,7 +39,7 @@ function UrgencyPill({ level }: { level: UrgencyLevel }) {
   );
 }
 
-export default function CorpusExplorer({ documents, categories, stats, initialDocId }: CorpusExplorerProps) {
+export default function CorpusExplorer({ documents, categories, initialDocId }: CorpusExplorerProps) {
   const validInitial = initialDocId && documents.some((d) => d.doc_id === initialDocId) ? initialDocId : "MED-001";
   const [keyword, setKeyword] = useState(
     initialDocId && documents.some((d) => d.doc_id === initialDocId) ? initialDocId : ""
@@ -171,27 +170,6 @@ export default function CorpusExplorer({ documents, categories, stats, initialDo
           <strong>MedlinePlus Health Topics (U.S. National Library of Medicine / NIH, snapshot {documents[0]?.source_snapshot ?? "2026-11-26"}, lisensi Public Domain)</strong> ke dalam {categories.length} kategori sistem organ. Seluruh dokumen memiliki ID topik, kutipan ringkasan asli, dan tautan URL individual yang dapat diverifikasi langsung.
         </p>
 
-        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-border bg-surface-subtle p-3">
-            <div className="text-xs font-semibold text-muted-foreground">Total Dokumen (N)</div>
-            <div className="font-heading text-xl font-extrabold text-primary">{stats.total_documents}</div>
-          </div>
-          <div className="rounded-xl border border-border bg-surface-subtle p-3">
-            <div className="text-xs font-semibold text-muted-foreground">Ukuran Kosakata (|V|)</div>
-            <div className="font-heading text-xl font-extrabold text-primary">{stats.vocabulary_size} term</div>
-          </div>
-          <div className="rounded-xl border border-border bg-surface-subtle p-3">
-            <div className="text-xs font-semibold text-muted-foreground">Total Token Terindeks</div>
-            <div className="font-heading text-xl font-extrabold text-ink-strong">{stats.total_tokens}</div>
-          </div>
-          <div className="rounded-xl border border-border bg-surface-subtle p-3">
-            <div className="text-xs font-semibold text-muted-foreground">Rata-rata Panjang Dokumen</div>
-            <div className="font-heading text-xl font-extrabold text-ink-strong">
-              {stats.avg_doc_length} <span className="text-xs font-medium text-muted-foreground">({stats.min_doc_length}&ndash;{stats.max_doc_length})</span>
-            </div>
-          </div>
-        </div>
-
         <div className="mb-3.5 max-w-[460px]">
           <label htmlFor="sample-doc-select" className={labelClass}>
             Pilih Dokumen untuk Inspeksi Sebelum vs Sesudah Preprocessing:
@@ -242,31 +220,19 @@ export default function CorpusExplorer({ documents, categories, stats, initialDo
                 </td>
               </tr>
               <tr>
-                <td className="whitespace-nowrap"><strong>1. Sebelum Diproses (Raw)</strong></td>
+                <td className="whitespace-nowrap"><strong>Sebelum Diproses (Raw)</strong></td>
                 <td>{samplePrep.original}</td>
               </tr>
               <tr>
-                <td className="whitespace-nowrap"><strong>2. Case Folding</strong></td>
-                <td><code className="mono-code">{samplePrep.case_folding}</code></td>
-              </tr>
-              <tr>
-                <td className="whitespace-nowrap"><strong>3. Normalisasi Slang &amp; Teks</strong></td>
+                <td className="whitespace-nowrap"><strong>Case Folding &amp; Normalisasi</strong></td>
                 <td><code className="mono-code">{samplePrep.normalized}</code></td>
               </tr>
               <tr>
-                <td className="whitespace-nowrap"><strong>4. Tokenization</strong></td>
-                <td><code className="mono-code">[{samplePrep.tokenized.join(", ")}]</code></td>
-              </tr>
-              <tr>
-                <td className="whitespace-nowrap"><strong>5. Stopword Removal</strong></td>
-                <td><code className="mono-code">[{samplePrep.stopword_removed.join(", ")}]</code></td>
-              </tr>
-              <tr>
-                <td className="whitespace-nowrap"><strong>6. Stemming (Final Tokens)</strong></td>
+                <td className="whitespace-nowrap"><strong>Setelah Diproses (Final Tokens)</strong></td>
                 <td>
                   <code className="mono-code">[{samplePrep.stemmed.join(", ")}]</code>
                   <div className="mt-1.5 text-[12.5px] text-muted-foreground">
-                    Reduksi token: {samplePrep.token_count_before} token mentah &rarr; {samplePrep.token_count_after} token bersih. Pada indeks VSM/BM25, field <code className="mono-code">disease_name</code> dan <code className="mono-code">symptoms</code> diberi bobot 2x bersama <code className="mono-code">source_title</code>, <code className="mono-code">category</code>, dan <code className="mono-code">description</code>.
+                    Reduksi token: {samplePrep.token_count_before} token mentah &rarr; {samplePrep.token_count_after} token bersih siap indeks.
                   </div>
                 </td>
               </tr>

@@ -970,17 +970,8 @@ export default function SearchWorkspace({
 
               {personaMode === "evaluator" && model === "boolean" && booleanResponse && (
                 <div className={infoBannerClass}>
-                  <div>
-                    <strong>Ekspresi Postfix:</strong>{" "}
-                    <code className="mono-code">{booleanResponse.postfix_expression.join(" ") || "-"}</code>
-                    {" "}&bull; Total cocok eksak: <strong>{booleanResponse.count}</strong> dokumen
-                    {booleanResponse.count > topK ? ` (menampilkan ${topK} pertama)` : ""}
-                  </div>
-                  {booleanResponse.syntax_warning && (
-                    <div className="mt-1 font-bold text-warning-ink">
-                      Peringatan Sintaks: {booleanResponse.syntax_warning}
-                    </div>
-                  )}
+                  <strong>Ekspresi Postfix:</strong>{" "}
+                  <code className="mono-code">{booleanResponse.postfix_expression.join(" ") || "-"}</code>
                   <div className="mt-1">{booleanResponse.limitation_note}</div>
                 </div>
               )}
@@ -1366,17 +1357,6 @@ export default function SearchWorkspace({
                   <div className="mt-3.5 overflow-x-auto rounded-xl border border-border bg-ink-strong p-4 font-mono text-[13px] leading-[1.7] text-chart-grid dark:bg-slate-950 dark:text-sky-100">
                     Sim(Q, {xrayData.doc_id}) = {xrayData.dot_product_sum} / ({xrayData.query_norm} * {xrayData.doc_norm}) ={" "}
                     <strong>{xrayData.final_cosine_similarity} ({xrayData.final_percentage}%)</strong>
-                  </div>
-
-                  <div className="mt-3.5 rounded-xl border border-border bg-surface-subtle px-4 py-3 text-[12.5px] leading-relaxed text-muted-foreground">
-                    <div>
-                      <strong>Rumus &amp; Transparansi Pengindeksan ({xrayData.doc_token_count} token pada {xrayData.doc_id}):</strong>{" "}
-                      <code>IDF(t) = log10(N / DF(t)) + 1</code>, <code>W = TF &times; IDF</code>,{" "}
-                      <code>Cosine(Q, D) = &Sigma;(Wq &middot; Wd) / (||Q|| &times; ||D||)</code>. {xrayData.indexing_note}
-                    </div>
-                    <div className="mt-1.5">
-                      <strong>Mekanisme Tie-Breaking (Skor Sama):</strong> 1) Skor Cosine DESC &rarr; 2) Jumlah Term Cocok (Overlap) DESC &rarr; 3) Tingkat Urgensi Medis DESC (Darurat &gt; Sedang &gt; Ringan) &rarr; 4) Doc ID ASC.
-                    </div>
                   </div>
                 </div>
               )}

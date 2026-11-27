@@ -1,13 +1,11 @@
 import rawCorpus from "@/data/medical_dataset.json";
-import { preprocessText, preprocessWithOptions } from "./preprocessing";
+import { preprocessText, stemToken } from "./preprocessing";
 import type {
   BooleanSearchResponse,
-  CorpusStats,
   EvalQueryResult,
   ManualCalculationBreakdown,
   ManualTermDetail,
   MedicalDocument,
-  PreprocessingAblationScenario,
   SearchResult,
   SystemEvaluationSummary,
   UrgencyLevel
@@ -25,48 +23,9 @@ const URGENCY_WEIGHT: Record<UrgencyLevel, number> = {
   Ringan: 1
 };
 
-export const BENCHMARK_EVAL_QUERIES = [
-  { qid: "Q01", query: "demam tinggi sakit kepala bintik merah", ground_truth: ["MED-001", "MED-004", "MED-007"], intent: "Penyakit tropis dengan ruam dan demam tinggi" },
-  { qid: "Q02", query: "batuk kering sesak napas demam hilang penciuman", ground_truth: ["MED-006", "MED-018", "MED-016"], intent: "Infeksi pernapasan akut dengan anosmia" },
-  { qid: "Q03", query: "nyeri dada sebelah kiri sesak napas keringat dingin", ground_truth: ["MED-026", "MED-027", "MED-028"], intent: "Sindrom koroner akut / kegawatdaruratan jantung" },
-  { qid: "Q04", query: "sakit perut kanan bawah mual muntah demam", ground_truth: ["MED-038", "MED-039"], intent: "Kegawatdaruratan perut kuadran kanan bawah" },
-  { qid: "Q05", query: "sering haus sering kencing berat badan turun", ground_truth: ["MED-081", "MED-082"], intent: "Trias gejala klasik hiperglikemia diabetes" },
-  { qid: "Q06", query: "gatal bentol kemerahan setelah makan makanan laut", ground_truth: ["MED-071", "MED-072", "MED-078"], intent: "Reaksi alergi makanan akut kulit dan sistemik" },
-  { qid: "Q07", query: "nyeri sendi bengkak kemerahan jempol kaki", ground_truth: ["MED-061", "MED-062"], intent: "Radang sendi monoartikular akut podagra" },
-  { qid: "Q08", query: "mata kuning kulit kuning perut buncit lemas", ground_truth: ["MED-042", "MED-043", "MED-044"], intent: "Disfungsi hepar / penyakit kuning & asites" },
-  { qid: "Q09", query: "pusing berputar sensasi melayang mual muntah", ground_truth: ["MED-051", "MED-052"], intent: "Gangguan sistem vestibular keseimbangan" },
-  { qid: "Q10", query: "batuk dahak lama keringat malam berat turun", ground_truth: ["MED-016", "MED-018", "MED-020"], intent: "Penyakit paru kronis curiga tuberkulosis" }
-];
-
 export function checkEmergencyRedFlags(query: string): boolean {
   const qLower = query.toLowerCase();
   return RED_FLAG_TERMS.some((term) => qLower.includes(term));
-}
-
-function computeRankingMetrics(retrievedIds: string[], groundTruth: Set<string>) {
-  const totalRelevant = groundTruth.size;
-  const relIn5 = retrievedIds.slice(0, 5).filter((id) => groundTruth.has(id)).length;
-  const pAt5 = relIn5 / 5.0;
-
-  const relIn10 = retrievedIds.slice(0, 10).filter((id) => groundTruth.has(id)).length;
-  const pAt10 = relIn10 / 10.0;
-  const rAt10 = totalRelevant > 0 ? relIn10 / totalRelevant : 0;
-  const f1At10 = pAt10 + rAt10 > 0 ? (2 * pAt10 * rAt10) / (pAt10 + rAt10) : 0;
-
-  let runningRel = 0;
-  let precSum = 0;
-  let firstRelRank = 0;
-  retrievedIds.slice(0, 10).forEach((did, idx) => {
-    if (groundTruth.has(did)) {
-      runningRel += 1;
-      precSum += runningRel / (idx + 1);
-      if (firstRelRank === 0) firstRelRank = idx + 1;
-    }
-  });
-
-  const ap = totalRelevant > 0 ? precSum / totalRelevant : 0;
-  const rr = firstRelRank > 0 ? 1 / firstRelRank : 0;
-  return { pAt5, pAt10, rAt10, f1At10, ap, rr };
 }
 
 export class MedicalIREngine {
@@ -85,22 +44,17 @@ export class MedicalIREngine {
   public readonly k1 = 1.5;
   public readonly b = 0.75;
   public readonly avgDocLen: number;
-  private readonly preprocessFn: (text: string) => string[];
 
-  constructor(
-    docs: MedicalDocument[] = rawCorpus as MedicalDocument[],
-    preprocessFn: (text: string) => string[] = (text) => preprocessText(text, false)
-  ) {
+  constructor(docs: MedicalDocument[] = rawCorpus as MedicalDocument[]) {
     this.documents = docs;
     this.N = docs.length;
-    this.preprocessFn = preprocessFn;
 
     let totalLen = 0;
 
     for (const doc of this.documents) {
       this.docMap.set(doc.doc_id, doc);
       const searchContent = `${doc.disease_name} ${doc.disease_name} ${doc.source_title} ${doc.symptoms} ${doc.symptoms} ${doc.category} ${doc.description}`;
-      const tokens = this.preprocessFn(searchContent);
+      const tokens = preprocessText(searchContent);
 
       this.docTokens.set(doc.doc_id, tokens);
       this.docLen.set(doc.doc_id, tokens.length);
@@ -147,55 +101,21 @@ export class MedicalIREngine {
     return Array.from(new Set(this.documents.map((d) => d.category))).sort();
   }
 
-  public getCorpusStats(): CorpusStats {
-    const lengths = Array.from(this.docLen.values());
-    const totalTokens = lengths.reduce((acc, len) => acc + len, 0);
-    const minLen = lengths.length > 0 ? Math.min(...lengths) : 0;
-    const maxLen = lengths.length > 0 ? Math.max(...lengths) : 0;
-
-    const categoryCounts: Record<string, number> = {};
-    const urgencyCounts: Record<UrgencyLevel, number> = {
-      Darurat: 0,
-      Sedang: 0,
-      Ringan: 0
-    };
-
-    for (const doc of this.documents) {
-      categoryCounts[doc.category] = (categoryCounts[doc.category] ?? 0) + 1;
-      urgencyCounts[doc.urgency_level] = (urgencyCounts[doc.urgency_level] ?? 0) + 1;
-    }
-
-    return {
-      total_documents: this.N,
-      vocabulary_size: this.df.size,
-      total_tokens: totalTokens,
-      avg_doc_length: Math.round(this.avgDocLen * 100) / 100,
-      min_doc_length: minLen,
-      max_doc_length: maxLen,
-      category_counts: categoryCounts,
-      urgency_counts: urgencyCounts
-    };
-  }
-
   // ==========================================
   // MODEL 1: BOOLEAN RETRIEVAL (SHUNTING-YARD)
   // ==========================================
-  public parseBooleanQueryToPostfix(query: string): { postfix: string[]; warning?: string; implicitAndApplied: boolean } {
-    const cleaned = query
-      .replace(/\bdan\b/gi, " AND ")
-      .replace(/\batau\b/gi, " OR ")
-      .replace(/\bbukan\b/gi, " NOT ")
-      .replace(/\btidak\b/gi, " NOT ");
+  public parseBooleanQueryToPostfix(query: string): string[] {
+    let cleaned = query
+      .replace(/ dan /gi, " AND ")
+      .replace(/ atau /gi, " OR ")
+      .replace(/ bukan /gi, " NOT ")
+      .replace(/ tidak /gi, " NOT ");
 
     const rawTokens = preprocessText(cleaned, true);
     // Sisipkan operator AND implisit sebelum NOT atau di antara dua operand berurutan
     const normalizedTokens: string[] = [];
-    let implicitAndApplied = false;
-
-    const isBinaryOp = (t: string) => t === "AND" || t === "OR";
-    const isOperator = (t: string) => t === "AND" || t === "OR" || t === "NOT";
-
-    for (const tok of rawTokens) {
+    for (let i = 0; i < rawTokens.length; i++) {
+      const tok = rawTokens[i];
       const upper = tok.toUpperCase();
       const isBinaryOp = upper === "AND" || upper === "OR";
       if (normalizedTokens.length > 0) {
@@ -204,40 +124,29 @@ export class MedicalIREngine {
         const currNeedsImplicitAnd = upper === "NOT" || (!isBinaryOp && tok !== ")");
         if (prevIsOperandOrClose && currNeedsImplicitAnd) {
           normalizedTokens.push("AND");
-          implicitAndApplied = true;
         }
       }
-      normalizedTokens.push(canonical);
+      normalizedTokens.push(tok);
     }
 
     const precedence: Record<string, number> = { NOT: 3, AND: 2, OR: 1 };
     const output: string[] = [];
     const opStack: string[] = [];
-    let parenBalance = 0;
-    let warning: string | undefined;
 
     for (const token of normalizedTokens) {
       const upper = token.toUpperCase();
       if (upper in precedence) {
-        const isRightAssoc = upper === "NOT";
         while (
           opStack.length > 0 &&
           opStack[opStack.length - 1] !== "(" &&
-          (isRightAssoc
-            ? (precedence[opStack[opStack.length - 1]] ?? 0) > precedence[upper]
-            : (precedence[opStack[opStack.length - 1]] ?? 0) >= precedence[upper])
+          (precedence[opStack[opStack.length - 1]] ?? 0) >= precedence[upper]
         ) {
           output.push(opStack.pop()!);
         }
         opStack.push(upper);
       } else if (token === "(") {
-        parenBalance += 1;
         opStack.push("(");
       } else if (token === ")") {
-        parenBalance -= 1;
-        if (parenBalance < 0) {
-          warning = "Tanda kurung tutup ')' berlebih terdeteksi pada ekspresi Boolean.";
-        }
         while (opStack.length > 0 && opStack[opStack.length - 1] !== "(") {
           output.push(opStack.pop()!);
         }
@@ -245,25 +154,19 @@ export class MedicalIREngine {
           opStack.pop();
         }
       } else {
-        // Token sudah di-stem oleh preprocessText(cleaned, true); hindari double stemming
-        output.push(token.toLowerCase());
+        output.push(stemToken(token.toLowerCase()));
       }
     }
 
-    if (parenBalance > 0) {
-      warning = "Tanda kurung buka '(' belum ditutup pada ekspresi Boolean.";
-    }
-
     while (opStack.length > 0) {
-      const top = opStack.pop()!;
-      if (top !== "(") output.push(top);
+      output.push(opStack.pop()!);
     }
-    return { postfix: output, warning, implicitAndApplied };
+    return output;
   }
 
   public searchBoolean(query: string, categoryFilter?: string): BooleanSearchResponse {
     const allDocs = new Set<string>(this.docMap.keys());
-    const { postfix, warning, implicitAndApplied } = this.parseBooleanQueryToPostfix(query);
+    const postfix = this.parseBooleanQueryToPostfix(query);
 
     if (postfix.length === 0) {
       return {
@@ -271,45 +174,31 @@ export class MedicalIREngine {
         postfix_expression: [],
         matches: [],
         count: 0,
-        limitation_note: "Kueri kosong atau seluruh kata tereliminasi sebagai stopwords.",
-        syntax_warning: warning
+        limitation_note: "Kueri kosong atau seluruh kata tereliminasi sebagai stopwords."
       };
     }
 
     const evalStack: Set<string>[] = [];
-    let evalWarning = warning;
 
     for (const token of postfix) {
       if (token === "NOT") {
-        if (evalStack.length < 1) {
-          evalWarning = evalWarning ?? "Operator NOT tidak memiliki operand yang valid.";
-          continue;
-        }
-        const operand = evalStack.pop()!;
+        const operand = evalStack.pop() ?? new Set<string>();
         const complement = new Set<string>();
         for (const id of allDocs) {
           if (!operand.has(id)) complement.add(id);
         }
         evalStack.push(complement);
       } else if (token === "AND") {
-        if (evalStack.length < 2) {
-          evalWarning = evalWarning ?? "Operator AND membutuhkan dua operand.";
-          continue;
-        }
-        const right = evalStack.pop()!;
-        const left = evalStack.pop()!;
+        const right = evalStack.pop() ?? new Set<string>();
+        const left = evalStack.pop() ?? new Set<string>();
         const inter = new Set<string>();
         for (const id of left) {
           if (right.has(id)) inter.add(id);
         }
         evalStack.push(inter);
       } else if (token === "OR") {
-        if (evalStack.length < 2) {
-          evalWarning = evalWarning ?? "Operator OR membutuhkan dua operand.";
-          continue;
-        }
-        const right = evalStack.pop()!;
-        const left = evalStack.pop()!;
+        const right = evalStack.pop() ?? new Set<string>();
+        const left = evalStack.pop() ?? new Set<string>();
         const uni = new Set<string>(left);
         for (const id of right) uni.add(id);
         evalStack.push(uni);
@@ -328,19 +217,13 @@ export class MedicalIREngine {
       matches = matches.filter((m) => m.category === categoryFilter);
     }
 
-    const implicitNote = implicitAndApplied
-      ? " Operator AND implisit disisipkan antar kata tanpa operator eksplisit."
-      : "";
-
     return {
       query,
       postfix_expression: postfix,
       matches,
       count: matches.length,
       limitation_note:
-        "Keterbatasan Boolean Retrieval: Hasil bersifat unranked (tanpa skor relevansi). Dokumen bernilai biner (hanya 1 atau 0), sehingga tidak dapat mengurutkan penyakit berdasarkan tingkat kemiripan." +
-        implicitNote,
-      syntax_warning: evalWarning
+        "Keterbatasan Boolean Retrieval: Hasil bersifat unranked (tanpa skor relevansi). Dokumen bernilai biner (hanya 1 atau 0), sehingga tidak dapat mengurutkan penyakit berdasarkan tingkat kemiripan."
     };
   }
 
@@ -348,7 +231,7 @@ export class MedicalIREngine {
   // MODEL 2: VECTOR SPACE MODEL (VSM TF-IDF)
   // ==========================================
   public searchVSM(query: string, topK = 10, categoryFilter?: string): SearchResult[] {
-    const qTokens = this.preprocessFn(query);
+    const qTokens = preprocessText(query);
     if (qTokens.length === 0) return [];
 
     const qTf: Record<string, number> = {};
@@ -467,10 +350,9 @@ export class MedicalIREngine {
   // MODEL BONUS: OKAPI BM25
   // ==========================================
   public searchBM25(query: string, topK = 10, categoryFilter?: string): SearchResult[] {
-    const qTokens = this.preprocessFn(query);
+    const qTokens = preprocessText(query);
     if (qTokens.length === 0) return [];
 
-    const uniqueQueryTerms = Array.from(new Set(qTokens));
     const scored: Array<SearchResult & { urgencyWeight: number }> = [];
 
     for (const doc of this.documents) {
@@ -483,7 +365,7 @@ export class MedicalIREngine {
       let bm25Score = 0;
       const overlapSet = new Set<string>();
 
-      for (const term of uniqueQueryTerms) {
+      for (const term of qTokens) {
         const freq = dTf[term] ?? 0;
         if (freq > 0) {
           const idfVal = this.idf.get(term) ?? 0;
@@ -525,16 +407,8 @@ export class MedicalIREngine {
     scored.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       if (b.overlap_count !== a.overlap_count) return b.overlap_count - a.overlap_count;
-      if (b.urgencyWeight !== a.urgencyWeight) return b.urgencyWeight - a.urgencyWeight;
       return a.doc_id.localeCompare(b.doc_id);
     });
-
-    for (let i = 0; i < scored.length - 1; i++) {
-      if (scored[i].score === scored[i + 1].score) {
-        scored[i].tie_breaker_used = true;
-        scored[i + 1].tie_breaker_used = true;
-      }
-    }
 
     return scored.slice(0, topK).map((item, idx) => ({
       ...item,
@@ -549,7 +423,7 @@ export class MedicalIREngine {
     const doc = this.docMap.get(docId);
     if (!doc) return null;
 
-    const qTokens = this.preprocessFn(query);
+    const qTokens = preprocessText(query);
     const qTf: Record<string, number> = {};
     for (const t of qTokens) qTf[t] = (qTf[t] ?? 0) + 1;
 
@@ -592,9 +466,6 @@ export class MedicalIREngine {
       doc_id: docId,
       disease_name: doc.disease_name,
       total_documents_N: this.N,
-      doc_token_count: this.docLen.get(docId) ?? 0,
-      indexing_note:
-        "Dokumen diindeks dengan field weighting (2x disease_name, 2x symptoms, 1x source_title, 1x category, 1x description). Norma ||D|| dihitung atas seluruh term unik dalam dokumen terindeks tersebut.",
       terms_detail: termsDetail,
       dot_product_sum: Math.round(dotProduct * 10000) / 10000,
       query_norm: Math.round(qNorm * 10000) / 10000,
@@ -606,85 +477,22 @@ export class MedicalIREngine {
   }
 
   // ==========================================
-  // EKSPERIMEN PENGARUH PREPROCESSING (ABLATION)
-  // ==========================================
-  public runPreprocessingImpactExperiment(): PreprocessingAblationScenario[] {
-    const scenarios: Array<{
-      id: string;
-      label: string;
-      description: string;
-      fn: (t: string) => string[];
-    }> = [
-      {
-        id: "raw_baseline",
-        label: "1. Baseline (Case Folding + Tokenisasi)",
-        description: "Tanpa stopword removal, tanpa normalisasi slang medis, dan tanpa stemming.",
-        fn: (t: string) =>
-          preprocessWithOptions(t, {
-            useNormalization: false,
-            useStopwordRemoval: false,
-            useStemming: false
-          })
-      },
-      {
-        id: "stopword_only",
-        label: "2. + Stopword Removal (Tanpa Slang & Stemming)",
-        description: "Case folding, tokenisasi, dan penghapusan stopwords umum tanpa normalisasi/stemming.",
-        fn: (t: string) =>
-          preprocessWithOptions(t, {
-            useNormalization: false,
-            useStopwordRemoval: true,
-            useStemming: false
-          })
-      },
-      {
-        id: "full_pipeline",
-        label: "3. Full Pipeline (Slang + Stopword + Stemming)",
-        description: "Seluruh 5 tahap preprocessing aktif (Case Folding, Normalisasi, Tokenisasi, Stopword Removal, Stemming).",
-        fn: (t: string) => preprocessText(t, false)
-      }
-    ];
-
-    return scenarios.map((sc) => {
-      const subEngine =
-        sc.id === "full_pipeline" ? this : new MedicalIREngine(this.documents, sc.fn);
-      const nQ = BENCHMARK_EVAL_QUERIES.length;
-      let sumP5 = 0;
-      let sumP10 = 0;
-      let sumR10 = 0;
-      let sumAp = 0;
-      let sumRr = 0;
-
-      for (const item of BENCHMARK_EVAL_QUERIES) {
-        const gt = new Set(item.ground_truth);
-        const retrievedIds = subEngine.searchVSM(item.query, 10).map((d) => d.doc_id);
-        const m = computeRankingMetrics(retrievedIds, gt);
-        sumP5 += m.pAt5;
-        sumP10 += m.pAt10;
-        sumR10 += m.rAt10;
-        sumAp += m.ap;
-        sumRr += m.rr;
-      }
-
-      return {
-        scenario_id: sc.id,
-        label: sc.label,
-        description: sc.description,
-        vocabulary_size: subEngine.df.size,
-        avg_doc_length: Math.round(subEngine.avgDocLen * 100) / 100,
-        mean_p5: Math.round((sumP5 / nQ) * 1000) / 1000,
-        mean_p10: Math.round((sumP10 / nQ) * 1000) / 1000,
-        mean_r10: Math.round((sumR10 / nQ) * 1000) / 1000,
-        map: Math.round((sumAp / nQ) * 1000) / 1000,
-        mrr: Math.round((sumRr / nQ) * 1000) / 1000
-      };
-    });
-  }
-
-  // ==========================================
-  // EVALUASI 10 QUERY BENCHMARK (VSM vs BM25 vs BOOLEAN)
+  // EVALUASI 10 QUERY BENCHMARK (MAP)
   // ==========================================
   public runSystemEvaluation(): SystemEvaluationSummary {
+    const evalQueries = [
+      { qid: "Q01", query: "demam tinggi sakit kepala bintik merah", ground_truth: ["MED-001", "MED-004", "MED-007"], intent: "Penyakit tropis dengan ruam dan demam tinggi" },
+      { qid: "Q02", query: "batuk kering sesak napas demam hilang penciuman", ground_truth: ["MED-006", "MED-018", "MED-016"], intent: "Infeksi pernapasan akut dengan anosmia" },
+      { qid: "Q03", query: "nyeri dada sebelah kiri sesak napas keringat dingin", ground_truth: ["MED-026", "MED-027", "MED-028"], intent: "Sindrom koroner akut / kegawatdaruratan jantung" },
+      { qid: "Q04", query: "sakit perut kanan bawah mual muntah demam", ground_truth: ["MED-038", "MED-039"], intent: "Kegawatdaruratan perut kuadran kanan bawah" },
+      { qid: "Q05", query: "sering haus sering kencing berat badan turun", ground_truth: ["MED-081", "MED-082"], intent: "Trias gejala klasik hiperglikemia diabetes" },
+      { qid: "Q06", query: "gatal bentol kemerahan setelah makan makanan laut", ground_truth: ["MED-071", "MED-072", "MED-078"], intent: "Reaksi alergi makanan akut kulit dan sistemik" },
+      { qid: "Q07", query: "nyeri sendi bengkak kemerahan jempol kaki", ground_truth: ["MED-061", "MED-062"], intent: "Radang sendi monoartikular akut podagra" },
+      { qid: "Q08", query: "mata kuning kulit kuning perut buncit lemas", ground_truth: ["MED-042", "MED-043", "MED-044"], intent: "Disfungsi hepar / penyakit kuning & asites" },
+      { qid: "Q09", query: "pusing berputar sensasi melayang mual muntah", ground_truth: ["MED-051", "MED-052"], intent: "Gangguan sistem vestibular keseimbangan" },
+      { qid: "Q10", query: "batuk dahak lama keringat malam berat turun", ground_truth: ["MED-016", "MED-018", "MED-020"], intent: "Penyakit paru kronis curiga tuberkulosis" }
+    ];
+
     const queryResults: EvalQueryResult[] = [];
     let sumP5 = 0;
     let sumP10 = 0;
@@ -692,70 +500,54 @@ export class MedicalIREngine {
     let sumF1_10 = 0;
     let sumAp = 0;
     let sumRr = 0;
-
-    let sumBmP5 = 0;
-    let sumBmP10 = 0;
-    let sumBmR10 = 0;
-    let sumBmF1_10 = 0;
-    let sumBmAp = 0;
-    let sumBmRr = 0;
-
     let sumBoolP10 = 0;
     let sumBoolR10 = 0;
     let sumBoolF1_10 = 0;
-    let sumBoolAndP10 = 0;
-    let sumBoolAndR10 = 0;
-    let boolAndZeroRecallCount = 0;
 
-    for (const item of BENCHMARK_EVAL_QUERIES) {
+    for (const item of evalQueries) {
       const gt = new Set(item.ground_truth);
       const totalRelevant = gt.size;
 
-      // VSM
       const retrieved = this.searchVSM(item.query, 10);
       const retrievedIds = retrieved.map((d) => d.doc_id);
-      const vsmM = computeRankingMetrics(retrievedIds, gt);
 
-      // BM25
-      const bmRetrieved = this.searchBM25(item.query, 10);
-      const bmIds = bmRetrieved.map((d) => d.doc_id);
-      const bmM = computeRankingMetrics(bmIds, gt);
+      const relIn5 = retrievedIds.slice(0, 5).filter((id) => gt.has(id)).length;
+      const pAt5 = relIn5 / 5.0;
 
-      // Boolean OR (Unranked)
-      const boolRes = this.searchBoolean(item.query.trim().split(/\s+/).join(" OR "));
+      const relIn10 = retrievedIds.filter((id) => gt.has(id)).length;
+      const pAt10 = relIn10 / 10.0;
+      const rAt10 = totalRelevant > 0 ? relIn10 / totalRelevant : 0;
+      const f1At10 = pAt10 + rAt10 > 0 ? (2 * pAt10 * rAt10) / (pAt10 + rAt10) : 0;
+
+      let runningRel = 0;
+      let precSum = 0;
+      let firstRelRank = 0;
+      retrievedIds.forEach((did, idx) => {
+        if (gt.has(did)) {
+          runningRel += 1;
+          precSum += runningRel / (idx + 1);
+          if (firstRelRank === 0) firstRelRank = idx + 1;
+        }
+      });
+      const ap = totalRelevant > 0 ? precSum / totalRelevant : 0;
+      const rr = firstRelRank > 0 ? 1 / firstRelRank : 0;
+
+      const boolRes = this.searchBoolean(item.query.replace(/ /g, " OR "));
       const boolIds = boolRes.matches.slice(0, 10).map((d) => d.doc_id);
       const boolRel = boolIds.filter((id) => gt.has(id)).length;
       const boolP10 = boolRel / Math.max(boolIds.length, 1);
       const boolR10 = totalRelevant > 0 ? boolRel / totalRelevant : 0;
       const boolF1_10 = boolP10 + boolR10 > 0 ? (2 * boolP10 * boolR10) / (boolP10 + boolR10) : 0;
 
-      // Boolean AND (Strict)
-      const boolAndRes = this.searchBoolean(item.query.trim().split(/\s+/).join(" AND "));
-      const boolAndIds = boolAndRes.matches.slice(0, 10).map((d) => d.doc_id);
-      const boolAndRel = boolAndIds.filter((id) => gt.has(id)).length;
-      const boolAndP10 = boolAndIds.length > 0 ? boolAndRel / boolAndIds.length : 0;
-      const boolAndR10 = totalRelevant > 0 ? boolAndRel / totalRelevant : 0;
-      if (boolAndRes.count === 0) boolAndZeroRecallCount += 1;
-
-      sumP5 += vsmM.pAt5;
-      sumP10 += vsmM.pAt10;
-      sumR10 += vsmM.rAt10;
-      sumF1_10 += vsmM.f1At10;
-      sumAp += vsmM.ap;
-      sumRr += vsmM.rr;
-
-      sumBmP5 += bmM.pAt5;
-      sumBmP10 += bmM.pAt10;
-      sumBmR10 += bmM.rAt10;
-      sumBmF1_10 += bmM.f1At10;
-      sumBmAp += bmM.ap;
-      sumBmRr += bmM.rr;
-
+      sumP5 += pAt5;
+      sumP10 += pAt10;
+      sumR10 += rAt10;
+      sumF1_10 += f1At10;
+      sumAp += ap;
+      sumRr += rr;
       sumBoolP10 += boolP10;
       sumBoolR10 += boolR10;
       sumBoolF1_10 += boolF1_10;
-      sumBoolAndP10 += boolAndP10;
-      sumBoolAndR10 += boolAndR10;
 
       const relevantFound = retrieved
         .filter((d) => gt.has(d.doc_id))
@@ -771,34 +563,23 @@ export class MedicalIREngine {
         intent: item.intent,
         ground_truth_ids: item.ground_truth,
         ground_truth_count: totalRelevant,
-        vsm_p5: Math.round(vsmM.pAt5 * 1000) / 1000,
-        vsm_p10: Math.round(vsmM.pAt10 * 1000) / 1000,
-        vsm_r10: Math.round(vsmM.rAt10 * 1000) / 1000,
-        vsm_f1_10: Math.round(vsmM.f1At10 * 1000) / 1000,
-        vsm_ap: Math.round(vsmM.ap * 1000) / 1000,
-        vsm_rr: Math.round(vsmM.rr * 1000) / 1000,
-        bm25_p5: Math.round(bmM.pAt5 * 1000) / 1000,
-        bm25_p10: Math.round(bmM.pAt10 * 1000) / 1000,
-        bm25_r10: Math.round(bmM.rAt10 * 1000) / 1000,
-        bm25_f1_10: Math.round(bmM.f1At10 * 1000) / 1000,
-        bm25_ap: Math.round(bmM.ap * 1000) / 1000,
-        bm25_rr: Math.round(bmM.rr * 1000) / 1000,
+        vsm_p5: Math.round(pAt5 * 1000) / 1000,
+        vsm_p10: Math.round(pAt10 * 1000) / 1000,
+        vsm_r10: Math.round(rAt10 * 1000) / 1000,
+        vsm_f1_10: Math.round(f1At10 * 1000) / 1000,
+        vsm_ap: Math.round(ap * 1000) / 1000,
+        vsm_rr: Math.round(rr * 1000) / 1000,
         boolean_p10: Math.round(boolP10 * 1000) / 1000,
         boolean_r10: Math.round(boolR10 * 1000) / 1000,
         boolean_f1_10: Math.round(boolF1_10 * 1000) / 1000,
         boolean_match_count: boolRes.count,
-        boolean_and_p10: Math.round(boolAndP10 * 1000) / 1000,
-        boolean_and_r10: Math.round(boolAndR10 * 1000) / 1000,
-        boolean_and_match_count: boolAndRes.count,
         relevant_found: relevantFound,
         non_relevant_found: nonRelevantFound,
         top_retrieved: retrieved.slice(0, 3).map((d) => `${d.doc_id} (${d.disease_name})`)
       });
     }
 
-    const nQ = BENCHMARK_EVAL_QUERIES.length;
-    const preprocessingAblation = this.runPreprocessingImpactExperiment();
-
+    const nQ = evalQueries.length;
     return {
       query_results: queryResults,
       mean_precision_at_5: Math.round((sumP5 / nQ) * 1000) / 1000,
@@ -807,19 +588,9 @@ export class MedicalIREngine {
       mean_f1_at_10: Math.round((sumF1_10 / nQ) * 1000) / 1000,
       mean_average_precision_MAP: Math.round((sumAp / nQ) * 1000) / 1000,
       mean_reciprocal_rank_MRR: Math.round((sumRr / nQ) * 1000) / 1000,
-      bm25_mean_precision_at_5: Math.round((sumBmP5 / nQ) * 1000) / 1000,
-      bm25_mean_precision_at_10: Math.round((sumBmP10 / nQ) * 1000) / 1000,
-      bm25_mean_recall_at_10: Math.round((sumBmR10 / nQ) * 1000) / 1000,
-      bm25_mean_f1_at_10: Math.round((sumBmF1_10 / nQ) * 1000) / 1000,
-      bm25_MAP: Math.round((sumBmAp / nQ) * 1000) / 1000,
-      bm25_MRR: Math.round((sumBmRr / nQ) * 1000) / 1000,
       boolean_mean_precision_at_10: Math.round((sumBoolP10 / nQ) * 1000) / 1000,
       boolean_mean_recall_at_10: Math.round((sumBoolR10 / nQ) * 1000) / 1000,
       boolean_mean_f1_at_10: Math.round((sumBoolF1_10 / nQ) * 1000) / 1000,
-      boolean_and_mean_precision_at_10: Math.round((sumBoolAndP10 / nQ) * 1000) / 1000,
-      boolean_and_mean_recall_at_10: Math.round((sumBoolAndR10 / nQ) * 1000) / 1000,
-      boolean_and_zero_recall_queries: boolAndZeroRecallCount,
-      preprocessing_ablation: preprocessingAblation,
       total_queries_tested: nQ
     };
   }

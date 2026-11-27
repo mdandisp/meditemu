@@ -15,13 +15,11 @@ export default async function KorpusPage({
 }) {
   const engine = getMedicalIREngine();
   const resolved = await searchParams;
-  const stats = engine.getCorpusStats();
 
   return (
     <CorpusExplorer
       documents={engine.documents}
       categories={engine.getCategories()}
-      stats={stats}
       initialDocId={resolved?.doc}
     />
   );

@@ -46,7 +46,6 @@ export interface BooleanSearchResponse {
   matches: MedicalDocument[];
   count: number;
   limitation_note: string;
-  syntax_warning?: string;
 }
 
 export interface ManualTermDetail {
@@ -66,8 +65,6 @@ export interface ManualCalculationBreakdown {
   doc_id: string;
   disease_name: string;
   total_documents_N: number;
-  doc_token_count: number;
-  indexing_note: string;
   terms_detail: ManualTermDetail[];
   dot_product_sum: number;
   query_norm: number;
@@ -88,17 +85,6 @@ export interface PreprocessingSteps {
   token_count_after: number;
 }
 
-export interface CorpusStats {
-  total_documents: number;
-  vocabulary_size: number;
-  total_tokens: number;
-  avg_doc_length: number;
-  min_doc_length: number;
-  max_doc_length: number;
-  category_counts: Record<string, number>;
-  urgency_counts: Record<UrgencyLevel, number>;
-}
-
 export interface EvalQueryResult {
   qid: string;
   query: string;
@@ -111,35 +97,13 @@ export interface EvalQueryResult {
   vsm_f1_10: number;
   vsm_ap: number;
   vsm_rr: number;
-  bm25_p5: number;
-  bm25_p10: number;
-  bm25_r10: number;
-  bm25_f1_10: number;
-  bm25_ap: number;
-  bm25_rr: number;
   boolean_p10: number;
   boolean_r10: number;
   boolean_f1_10: number;
   boolean_match_count: number;
-  boolean_and_p10: number;
-  boolean_and_r10: number;
-  boolean_and_match_count: number;
   relevant_found: string[];
   non_relevant_found: string[];
   top_retrieved: string[];
-}
-
-export interface PreprocessingAblationScenario {
-  scenario_id: string;
-  label: string;
-  description: string;
-  vocabulary_size: number;
-  avg_doc_length: number;
-  mean_p5: number;
-  mean_p10: number;
-  mean_r10: number;
-  map: number;
-  mrr: number;
 }
 
 export interface SystemEvaluationSummary {
@@ -150,18 +114,8 @@ export interface SystemEvaluationSummary {
   mean_f1_at_10: number;
   mean_average_precision_MAP: number;
   mean_reciprocal_rank_MRR: number;
-  bm25_mean_precision_at_5: number;
-  bm25_mean_precision_at_10: number;
-  bm25_mean_recall_at_10: number;
-  bm25_mean_f1_at_10: number;
-  bm25_MAP: number;
-  bm25_MRR: number;
   boolean_mean_precision_at_10: number;
   boolean_mean_recall_at_10: number;
   boolean_mean_f1_at_10: number;
-  boolean_and_mean_precision_at_10: number;
-  boolean_and_mean_recall_at_10: number;
-  boolean_and_zero_recall_queries: number;
-  preprocessing_ablation: PreprocessingAblationScenario[];
   total_queries_tested: number;
 }
