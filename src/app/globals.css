@@ -1,0 +1,286 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+
+@theme {
+  /* Brand & Clinical Colors (WCAG >= 4.5:1 Verified) */
+  --color-primary: #0B5CAB;
+  --color-primary-hover: #084785;
+  --color-primary-soft: #EBF4FF;
+  --color-on-primary: #FFFFFF;
+
+  --color-teal: #0D9488;
+  --color-teal-deep: #0F766E;
+  --color-teal-soft: #ECFDF8;
+
+  --color-secondary: #0E7490;
+  --color-secondary-light: #CFFAFE;
+  --color-accent: #047857;
+  --color-accent-soft: #ECFDF5;
+  --color-on-accent: #FFFFFF;
+
+  /* Atmospheric Soft-Clinical Surfaces & Ink */
+  --color-background: #F1F6FA;
+  --color-surface: #FFFFFF;
+  --color-surface-glass: rgba(255, 255, 255, 0.92);
+  --color-surface-subtle: #F7FAFC;
+  --color-foreground: #0F3D5E;
+  --color-ink-strong: #0F172A;
+  --color-muted: #E6EFF6;
+  --color-muted-foreground: #475569;
+  --color-border: #D5E2EE;
+  --color-border-brand: #BFDBFE;
+
+  /* Soft Bento KPI Tints (Dark Ink for >= 8:1 Contrast) */
+  --color-tint-blue-bg: #EBF5FF;
+  --color-tint-blue-ink: #1E3A8A;
+  --color-tint-green-bg: #ECFDF5;
+  --color-tint-green-ink: #065F46;
+  --color-tint-violet-bg: #F3EEFF;
+  --color-tint-violet-ink: #5B21B6;
+  --color-tint-amber-bg: #FFF4E5;
+  --color-tint-amber-ink: #9A3412;
+
+  /* Medical Safety & Triage */
+  --color-emergency-bg: #FEF2F2;
+  --color-emergency-border: #DC2626;
+  --color-emergency-ink: #991B1B;
+  --color-emergency-badge-bg: #FEE2E2;
+  --color-emergency-badge-border: #FCA5A5;
+
+  --color-warning-bg: #FFFBEB;
+  --color-warning-border: #D97706;
+  --color-warning-ink: #92400E;
+  --color-warning-badge-bg: #FEF3C7;
+  --color-warning-badge-border: #FCD34D;
+  --color-warning-strip-border: #FDE68A;
+
+  --color-safe-bg: #ECFDF5;
+  --color-safe-border: #059669;
+  --color-safe-ink: #065F46;
+  --color-safe-badge-bg: #DCFCE7;
+  --color-safe-badge-border: #86EFAC;
+
+  --color-chart-slate: #CBD5E1;
+  --color-chart-grid: #E2E8F0;
+  --color-chart-axis: #94A3B8;
+
+  --color-highlight-bg: #FEF08A;
+  --color-highlight-ink: #713F12;
+  --color-ring: #0B5CAB;
+
+  --color-table-head-bg: #0F3D5E;
+  --color-table-head-ink: #FFFFFF;
+
+  /* Soft UI Evolution Shadows */
+  --shadow-soft-sm: 0 2px 6px rgba(15, 23, 42, 0.04);
+  --shadow-soft-md: 0 10px 28px -6px rgba(11, 92, 171, 0.09), 0 2px 8px rgba(15, 23, 42, 0.04);
+  --shadow-soft-lg: 0 18px 40px -10px rgba(11, 92, 171, 0.14);
+}
+
+@theme inline {
+  /* Typography (References runtime CSS vars injected by next/font/google) */
+  --font-heading: var(--font-heading-loaded), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body: var(--font-body-loaded), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: var(--font-mono-loaded), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+
+  --color-primary: #38BDF8;
+  --color-primary-hover: #7DD3FC;
+  --color-primary-soft: rgba(56, 189, 248, 0.16);
+  --color-on-primary: #062038;
+
+  --color-teal: #2DD4BF;
+  --color-teal-deep: #14B8A6;
+  --color-teal-soft: rgba(20, 184, 166, 0.16);
+
+  --color-secondary: #38BDF8;
+  --color-secondary-light: rgba(56, 189, 248, 0.22);
+  --color-accent: #34D399;
+  --color-accent-soft: rgba(16, 185, 129, 0.16);
+  --color-on-accent: #022C22;
+
+  --color-background: #080E1A;
+  --color-surface: #0F172A;
+  --color-surface-glass: rgba(15, 23, 42, 0.90);
+  --color-surface-subtle: #162033;
+  --color-foreground: #BAE6FD;
+  --color-ink-strong: #F1F5F9;
+  --color-muted: #1E293B;
+  --color-muted-foreground: #94A3B8;
+  --color-border: #24324A;
+  --color-border-brand: rgba(56, 189, 248, 0.35);
+
+  --color-tint-blue-bg: rgba(56, 189, 248, 0.16);
+  --color-tint-blue-ink: #BAE6FD;
+  --color-tint-green-bg: rgba(16, 185, 129, 0.16);
+  --color-tint-green-ink: #6EE7B7;
+  --color-tint-violet-bg: rgba(167, 139, 250, 0.18);
+  --color-tint-violet-ink: #DDD6FE;
+  --color-tint-amber-bg: rgba(245, 158, 11, 0.18);
+  --color-tint-amber-ink: #FDE68A;
+
+  --color-emergency-bg: rgba(239, 68, 68, 0.16);
+  --color-emergency-border: #EF4444;
+  --color-emergency-ink: #FCA5A5;
+  --color-emergency-badge-bg: rgba(239, 68, 68, 0.22);
+  --color-emergency-badge-border: rgba(248, 113, 113, 0.45);
+
+  --color-warning-bg: rgba(245, 158, 11, 0.14);
+  --color-warning-border: #F59E0B;
+  --color-warning-ink: #FDE68A;
+  --color-warning-badge-bg: rgba(245, 158, 11, 0.2);
+  --color-warning-badge-border: rgba(251, 191, 36, 0.45);
+  --color-warning-strip-border: rgba(251, 191, 36, 0.35);
+
+  --color-safe-bg: rgba(16, 185, 129, 0.16);
+  --color-safe-border: #10B981;
+  --color-safe-ink: #6EE7B7;
+  --color-safe-badge-bg: rgba(16, 185, 129, 0.2);
+  --color-safe-badge-border: rgba(52, 211, 153, 0.45);
+
+  --color-chart-slate: #475569;
+  --color-chart-grid: #1E293B;
+  --color-chart-axis: #475569;
+
+  --color-highlight-bg: rgba(250, 204, 21, 0.28);
+  --color-highlight-ink: #FEF08A;
+  --color-ring: #38BDF8;
+
+  --color-table-head-bg: #172742;
+  --color-table-head-ink: #E2E8F0;
+
+  --shadow-soft-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-soft-md: 0 10px 28px -6px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-soft-lg: 0 18px 40px -10px rgba(0, 0, 0, 0.6);
+}
+
+@layer base {
+
+  html,
+  body {
+    background-color: var(--color-background);
+    background-image:
+      radial-gradient(circle at 8% 0%, rgba(14, 165, 233, 0.10) 0%, transparent 40%),
+      radial-gradient(circle at 92% 12%, rgba(13, 148, 136, 0.09) 0%, transparent 38%);
+    background-attachment: fixed;
+    color: var(--color-ink-strong);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  :focus-visible {
+    outline: 2.5px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  button,
+  a,
+  select,
+  input,
+  textarea {
+    font-family: inherit;
+    touch-action: manipulation;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    top: auto;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  .skip-link:focus {
+    position: fixed;
+    left: 16px;
+    top: 16px;
+    width: auto;
+    height: auto;
+    padding: 10px 16px;
+    background: var(--color-primary);
+    color: var(--color-on-primary);
+    border-radius: 12px;
+    font-weight: 700;
+    z-index: 100;
+  }
+
+  .table-scroll {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    background: var(--color-surface);
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    text-align: left;
+  }
+
+  .data-table th {
+    background: var(--color-table-head-bg);
+    color: var(--color-table-head-ink);
+    font-family: var(--font-heading);
+    font-weight: 600;
+    padding: 12px 14px;
+    white-space: nowrap;
+  }
+
+  .data-table td {
+    padding: 12px 14px;
+    border-top: 1px solid var(--color-muted);
+    color: var(--color-ink-strong);
+    vertical-align: top;
+  }
+
+  .data-table tr:nth-child(even) td {
+    background: var(--color-surface-subtle);
+  }
+
+  .mono-code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--color-muted);
+    color: var(--color-foreground);
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+
+  mark.hl {
+    background: var(--color-highlight-bg);
+    color: var(--color-highlight-ink);
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+}
