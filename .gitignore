@@ -25,3 +25,7 @@ Thumbs.db
 
 # Generated UI screenshot exports
 exports/
+
+# Python cache
+__pycache__/
+*.py[cod]

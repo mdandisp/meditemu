@@ -14,10 +14,10 @@ import {
 import { MediTemuLogo } from "./OrganIllustrations";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Pencarian", icon: SearchIcon },
-  { href: "/alur", label: "Alur", icon: FlowIcon },
-  { href: "/evaluasi", label: "Evaluasi IR", icon: BarChartIcon },
-  { href: "/korpus", label: "Korpus", icon: DatabaseIcon }
+  { href: "/", label: "Cari Gejala", icon: SearchIcon },
+  { href: "/alur", label: "Cara Kerja", icon: FlowIcon },
+  { href: "/evaluasi", label: "Akurasi", icon: BarChartIcon },
+  { href: "/korpus", label: "Daftar Penyakit", icon: DatabaseIcon }
 ];
 
 export default function AppHeader() {
@@ -51,7 +51,7 @@ export default function AppHeader() {
                 MediTemu
               </span>
               <span className="block text-xs font-medium text-muted-foreground">
-                Medical Information Retrieval System
+                Pencarian Informasi Kesehatan
               </span>
             </span>
           </Link>

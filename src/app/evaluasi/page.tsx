@@ -37,7 +37,7 @@ export default function EvaluasiPage() {
       </section>
 
       <section
-        className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5"
+        className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6"
         aria-label="Ringkasan Metrik Evaluasi"
       >
         <div className={kpiCardClass}>
@@ -56,6 +56,12 @@ export default function EvaluasiPage() {
           <div className="mb-1.5 text-[13px] font-semibold text-muted-foreground">Mean Recall @ 10</div>
           <div className="font-heading text-[26px] font-bold text-primary">
             {(evalData.mean_recall_at_10 * 100).toFixed(1)}%
+          </div>
+        </div>
+        <div className={kpiCardClass}>
+          <div className="mb-1.5 text-[13px] font-semibold text-muted-foreground">Mean F1 @ 10</div>
+          <div className="font-heading text-[26px] font-bold text-primary">
+            {(evalData.mean_f1_at_10 * 100).toFixed(1)}%
           </div>
         </div>
         <div className={kpiCardClass}>

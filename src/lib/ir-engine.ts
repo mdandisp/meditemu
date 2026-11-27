@@ -112,14 +112,17 @@ export class MedicalIREngine {
       .replace(/ tidak /gi, " NOT ");
 
     const rawTokens = preprocessText(cleaned, true);
-    // Sisipkan operator AND implisit sebelum NOT jika didahului operand atau ")", mis. "(A AND B) NOT C"
+    // Sisipkan operator AND implisit sebelum NOT atau di antara dua operand berurutan
     const normalizedTokens: string[] = [];
     for (let i = 0; i < rawTokens.length; i++) {
       const tok = rawTokens[i];
       const upper = tok.toUpperCase();
-      if (upper === "NOT" && normalizedTokens.length > 0) {
+      const isBinaryOp = upper === "AND" || upper === "OR";
+      if (normalizedTokens.length > 0) {
         const prevUpper = normalizedTokens[normalizedTokens.length - 1].toUpperCase();
-        if (prevUpper !== "(" && prevUpper !== "AND" && prevUpper !== "OR" && prevUpper !== "NOT") {
+        const prevIsOperandOrClose = prevUpper !== "(" && prevUpper !== "AND" && prevUpper !== "OR" && prevUpper !== "NOT";
+        const currNeedsImplicitAnd = upper === "NOT" || (!isBinaryOp && tok !== ")");
+        if (prevIsOperandOrClose && currNeedsImplicitAnd) {
           normalizedTokens.push("AND");
         }
       }

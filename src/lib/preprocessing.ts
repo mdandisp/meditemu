@@ -112,7 +112,7 @@ export function caseFolding(text: string): string {
 export function normalizeText(text: string, preserveBoolean = false): string {
   let processed = caseFolding(text);
 
-  for (const [slang, formal] of Object.entries(MEDICAL_SLANG_DICT)) {
+  for (const [slang, formal] of Object.entries(MEDICAL_SLANG_DICT).sort((a, b) => b[0].length - a[0].length)) {
     // Dalam mode Boolean, hindari ekspansi 1 kata menjadi multi-kata agar jumlah operand tetap konsisten
     if (preserveBoolean && !slang.includes(" ") && formal.includes(" ")) {
       continue;

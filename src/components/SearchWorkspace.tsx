@@ -5,8 +5,12 @@ import Link from "next/link";
 import { checkEmergencyRedFlags, MedicalIREngine } from "@/lib/ir-engine";
 import { inspectPreprocessingSteps, preprocessText } from "@/lib/preprocessing";
 import type {
+  BooleanSearchResponse,
+  ManualCalculationBreakdown,
   MedicalDocument,
+  PreprocessingSteps,
   RetrievalModel,
+  SearchResult,
   SystemEvaluationSummary,
   UrgencyLevel
 } from "@/lib/types";
@@ -41,7 +45,7 @@ const QUICK_CHIPS = [
   { label: "sakit kepala", query: "sakit kepala pusing berputar", isDanger: false },
   { label: "nyeri sendi", query: "nyeri sendi bengkak jempol kaki", isDanger: false },
   { label: "flu", query: "flu demam batuk pilek", isDanger: false },
-  { label: "nyeri dada kiri (Uji Darurat)", query: "nyeri dada sebelah kiri sesak napas keringat dingin", isDanger: true }
+  { label: "nyeri dada kiri & sesak", query: "nyeri dada sebelah kiri sesak napas keringat dingin", isDanger: true }
 ];
 
 function renderHighlightedText(text: string, queryWords: string[]) {
@@ -126,6 +130,7 @@ export default function SearchWorkspace({
   const resultsPaneRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLElement>(null);
 
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
   const [personaMode, setPersonaMode] = useState<"evaluator" | "public">("public");
   const [readerTab, setReaderTab] = useState<"detail" | "xray" | "prep">("detail");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -142,15 +147,119 @@ export default function SearchWorkspace({
     "Pasien merasakan meriang panas dingin, puyeng, dan batuk-batuk berdarah!"
   );
 
+  const [pyEngineActive, setPyEngineActive] = useState<boolean>(false);
+  const [pyResults, setPyResults] = useState<SearchResult[] | null>(null);
+  const [pyBoolean, setPyBoolean] = useState<BooleanSearchResponse | null>(null);
+  const [pyXray, setPyXray] = useState<ManualCalculationBreakdown | null>(null);
+  const [pyXrayTop3, setPyXrayTop3] = useState<ManualCalculationBreakdown[] | null>(null);
+  const [pyPrepSteps, setPyPrepSteps] = useState<PreprocessingSteps | null>(null);
+  const [pyEvalSummary, setPyEvalSummary] = useState<SystemEvaluationSummary | null>(null);
+
+  const apiBase = process.env.NEXT_PUBLIC_PYTHON_API_URL ?? "http://127.0.0.1:8000";
+
   useEffect(() => {
     if (!submittedQuery.trim()) {
       setIsProcessing(false);
       return;
     }
     setIsProcessing(true);
-    const timer = window.setTimeout(() => setIsProcessing(false), 260);
-    return () => window.clearTimeout(timer);
-  }, [submittedQuery, model, topK, categoryFilter]);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const params = new URLSearchParams({
+      q: submittedQuery,
+      method: model,
+      topk: String(topK),
+      category: categoryFilter,
+      doc_id: selectedDocId
+    });
+
+    fetch(`${apiBase}/api/search?${params.toString()}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Python API error");
+        return res.json();
+      })
+      .then((data) => {
+        setPyEngineActive(true);
+        if (data.method === "boolean" && data.boolean) {
+          setPyBoolean(data.boolean);
+          setPyResults(null);
+          setPyXray(null);
+          setPyXrayTop3(null);
+        } else {
+          setPyBoolean(null);
+          setPyResults(data.results ?? []);
+          setPyXray(data.xray ?? null);
+          setPyXrayTop3(data.xray_top3 ?? null);
+        }
+      })
+      .catch(() => {
+        setPyEngineActive(false);
+        setPyResults(null);
+        setPyBoolean(null);
+        setPyXray(null);
+        setPyXrayTop3(null);
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
+        setIsProcessing(false);
+      });
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [apiBase, submittedQuery, model, topK, categoryFilter, selectedDocId]);
+
+  useEffect(() => {
+    if (readerTab !== "prep") return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const params = new URLSearchParams({ text: prepInput });
+
+    fetch(`${apiBase}/api/preprocess?${params.toString()}`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Python preprocess error");
+        return res.json();
+      })
+      .then((data: PreprocessingSteps) => {
+        setPyPrepSteps(data);
+      })
+      .catch(() => {
+        setPyPrepSteps(null);
+      })
+      .finally(() => clearTimeout(timeoutId));
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [apiBase, readerTab, prepInput]);
+
+  useEffect(() => {
+    if (wizardStep !== 4) return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    fetch(`${apiBase}/api/evaluate`, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error("Python evaluate error");
+        return res.json();
+      })
+      .then((data: SystemEvaluationSummary) => {
+        if (typeof data.mean_precision_at_5 === "number") {
+          setPyEvalSummary(data);
+        }
+      })
+      .catch(() => {
+        setPyEvalSummary(null);
+      })
+      .finally(() => clearTimeout(timeoutId));
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [apiBase, wizardStep]);
 
   const isRedFlag = useMemo(() => checkEmergencyRedFlags(submittedQuery), [submittedQuery]);
 
@@ -171,14 +280,16 @@ export default function SearchWorkspace({
 
   const vsmOrBm25Results = useMemo(() => {
     if (model === "boolean") return [];
+    if (pyEngineActive && pyResults) return pyResults;
     if (model === "bm25") return engine.searchBM25(submittedQuery, topK, categoryFilter);
     return engine.searchVSM(submittedQuery, topK, categoryFilter);
-  }, [engine, model, submittedQuery, topK, categoryFilter]);
+  }, [engine, model, submittedQuery, topK, categoryFilter, pyEngineActive, pyResults]);
 
   const booleanResponse = useMemo(() => {
     if (model !== "boolean") return null;
+    if (pyEngineActive && pyBoolean) return pyBoolean;
     return engine.searchBoolean(submittedQuery, categoryFilter);
-  }, [engine, model, submittedQuery, categoryFilter]);
+  }, [engine, model, submittedQuery, categoryFilter, pyEngineActive, pyBoolean]);
 
   // Unified normalized result list for Master-Detail Step 5 & 6
   const activeResults = useMemo(() => {
@@ -243,26 +354,37 @@ export default function SearchWorkspace({
   }, [activeResults, selectedDocId]);
 
   const xrayTargetId = activeDetailDoc?.doc_id ?? "MED-001";
-  const xrayData = useMemo(
-    () => engine.getManualCalculationSteps(submittedQuery, xrayTargetId),
-    [engine, submittedQuery, xrayTargetId]
-  );
+  const xrayData = useMemo(() => {
+    if (pyEngineActive && pyXray) return pyXray;
+    return engine.getManualCalculationSteps(submittedQuery, xrayTargetId);
+  }, [engine, submittedQuery, xrayTargetId, pyEngineActive, pyXray]);
 
   const xrayTop3 = useMemo(() => {
+    if (pyEngineActive && pyXrayTop3) return pyXrayTop3;
     return engine
       .searchVSM(submittedQuery, 3, categoryFilter)
       .map((item) => engine.getManualCalculationSteps(submittedQuery, item.doc_id))
       .filter((x): x is NonNullable<typeof x> => x !== null);
-  }, [engine, submittedQuery, categoryFilter]);
+  }, [engine, submittedQuery, categoryFilter, pyEngineActive, pyXrayTop3]);
 
-  const prepSteps = useMemo(() => inspectPreprocessingSteps(prepInput), [prepInput]);
+  const prepSteps = useMemo(
+    () => (pyEngineActive && pyPrepSteps ? pyPrepSteps : inspectPreprocessingSteps(prepInput)),
+    [prepInput, pyEngineActive, pyPrepSteps]
+  );
+
+  const activeEvalSummary = useMemo(
+    () => (pyEngineActive && pyEvalSummary ? pyEvalSummary : evalSummary),
+    [pyEngineActive, pyEvalSummary, evalSummary]
+  );
 
   function handleSearchSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!queryInput.trim()) return;
     setSubmittedQuery(queryInput);
     setPrepInput(queryInput || prepInput);
     setCurrentPage(1);
     setSelectedDocId("");
+    setWizardStep(2);
   }
 
   function handleChipClick(q: string) {
@@ -274,6 +396,7 @@ export default function SearchWorkspace({
     if (model === "boolean" && !/\b(AND|OR|NOT)\b/i.test(q)) {
       setModel("vsm");
     }
+    searchInputRef.current?.focus();
   }
 
   function handleClearInput() {
@@ -287,6 +410,7 @@ export default function SearchWorkspace({
     setSelectedDocId("");
     setCurrentPage(1);
     setReaderTab("detail");
+    setWizardStep(1);
     window.scrollTo({ top: 0, behavior: "smooth" });
     setTimeout(() => searchInputRef.current?.focus(), 200);
   }
@@ -315,32 +439,125 @@ export default function SearchWorkspace({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* =======================================================
-          STEPS 1, 2, 3: ASYMMETRIC EDITORIAL SEARCH + CONTROL DOCK
-         ======================================================= */}
-      <section
-        className="grid grid-cols-1 gap-4 min-[960px]:grid-cols-[1.55fr_minmax(340px,1fr)] min-[960px]:items-stretch"
-        aria-label="Pencarian Gejala dan Pengaturan Metode"
+      {/* Progressive Stepper Bar */}
+      <nav
+        aria-label="Tahapan Pencarian MediTemu"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-surface px-4 py-3 shadow-[var(--shadow-soft-sm)]"
       >
-        {/* Steps 1 & 2: Editorial Search Hero */}
-        <form
-          className="flex flex-col justify-between gap-4 rounded-3xl border border-border bg-surface p-[22px] shadow-[var(--shadow-soft-md)] md:p-7"
-          onSubmit={handleSearchSubmit}
-        >
+        <div className="flex flex-wrap items-center gap-2">
+          {(personaMode === "evaluator"
+            ? [
+                { id: 1 as const, label: "1. Kata Kunci" },
+                { id: 2 as const, label: "2. Metode & Top-K" },
+                { id: 3 as const, label: "3. Hasil & Detail" },
+                { id: 4 as const, label: "4. Evaluasi" }
+              ]
+            : [
+                { id: 1 as const, label: "1. Keluhan" },
+                { id: 2 as const, label: "2. Pengaturan" },
+                { id: 3 as const, label: "3. Hasil" }
+              ]
+          ).map((item) => {
+            const isActive = wizardStep === item.id;
+            const isPast = wizardStep > item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  if (item.id === 1 || submittedQuery.trim().length > 0) {
+                    setWizardStep(item.id);
+                  }
+                }}
+                className={`inline-flex min-h-9 items-center rounded-full px-3.5 py-1 text-xs font-bold transition-colors ${
+                  isActive
+                    ? "bg-primary text-on-primary shadow-[var(--shadow-soft-sm)]"
+                    : isPast
+                    ? "bg-primary-soft text-primary hover:bg-primary hover:text-on-primary"
+                    : "bg-surface-subtle text-muted-foreground"
+                }`}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5">
+          {wizardStep > 1 && submittedQuery.trim().length > 0 && (
+            <div className="text-xs text-muted-foreground">
+              {personaMode === "evaluator" ? (
+                <>
+                  Kueri: <strong className="text-ink-strong">&ldquo;{submittedQuery}&rdquo;</strong> &bull;{" "}
+                  <strong className="text-primary">{model.toUpperCase()}</strong> (Top-{topK})
+                </>
+              ) : (
+                <>
+                  Keluhan: <strong className="text-ink-strong">&ldquo;{submittedQuery}&rdquo;</strong>
+                </>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-border bg-surface-subtle px-3 py-1 text-xs font-bold text-foreground transition-colors duration-150 hover:border-primary hover:bg-primary-soft motion-reduce:transition-none"
+            aria-pressed={personaMode === "evaluator"}
+            onClick={() => {
+              const next = personaMode === "evaluator" ? "public" : "evaluator";
+              setPersonaMode(next);
+              if (next === "public") {
+                setReaderTab("detail");
+                if (model === "bm25") {
+                  setModel("vsm");
+                }
+                if (wizardStep === 4) {
+                  setWizardStep(3);
+                }
+              }
+            }}
+          >
+            <SlidersIcon size={13} />
+            {personaMode === "evaluator" ? "Mode: Advance" : "Mode: Classic"}
+          </button>
+        </div>
+      </nav>
+
+      {/* =======================================================
+          TAHAP 1: MASUKKAN KATA KUNCI SAJA (BERSIH & FOKUS)
+         ======================================================= */}
+      {wizardStep === 1 && (
+        <section aria-label="Pencarian Gejala">
+          <form
+            className="flex flex-col justify-between gap-5 rounded-3xl border border-border bg-surface p-6 shadow-[var(--shadow-soft-md)] md:p-8"
+            onSubmit={handleSearchSubmit}
+          >
           <div>
-            <StepBadge num="1–2" label="Masukkan Kata Kunci" />
+            <StepBadge
+              num="1"
+              label={personaMode === "evaluator" ? "Masukkan Kata Kunci" : "Ceritakan Gejala Anda"}
+            />
             <h1 className="mt-2.5 mb-1.5 font-heading text-2xl font-extrabold leading-tight tracking-[-0.025em] text-ink-strong md:text-[28px]">
               Temukan informasi kesehatan yang Anda butuhkan.
             </h1>
             <p className="m-0 text-[15px] text-muted-foreground">
-              Masukkan kata kunci gejala (misalnya <em>demam batuk</em>) untuk menelusuri{" "}
-              <strong>{engine.N} dokumen resmi MedlinePlus (NIH)</strong> yang dapat diverifikasi langsung ke tautan sumbernya.
+              {personaMode === "evaluator" ? (
+                <>
+                  Masukkan kata kunci gejala (misalnya <em>demam batuk</em>) untuk menelusuri{" "}
+                  <strong>{engine.N} dokumen resmi MedlinePlus (NIH)</strong> yang dapat diverifikasi langsung ke tautan sumbernya.
+                </>
+              ) : (
+                <>
+                  Ketik keluhan yang Anda rasakan (misalnya <em>demam batuk</em>) untuk membaca penjelasan penyakit dan penanganan awalnya.
+                </>
+              )}
             </p>
           </div>
 
           <div>
             <label htmlFor="meditemu-query" className="mb-2 block text-[12.5px] font-bold text-muted-foreground">
-              Kata Kunci Gejala atau Kondisi Medis
+              {personaMode === "evaluator"
+                ? "Kata Kunci Gejala atau Kondisi Medis"
+                : "Keluhan atau Gejala yang Dirasakan"}
             </label>
             <div className="flex flex-col gap-2.5 sm:flex-row">
               <div className="relative flex flex-auto items-center">
@@ -354,7 +571,7 @@ export default function SearchWorkspace({
                   className="min-h-[52px] w-full rounded-[18px] border-[1.5px] border-border bg-surface-subtle py-3 pr-[52px] pl-[42px] text-[15.5px] text-ink-strong transition duration-150 focus:border-primary focus:bg-surface focus:shadow-[0_0_0_4px_rgba(11,92,171,0.12)] focus:outline-none motion-reduce:transition-none"
                   value={queryInput}
                   onChange={(e) => setQueryInput(e.target.value)}
-                  placeholder="Cari informasi kesehatan (contoh: demam batuk)..."
+                  placeholder="Contoh: demam batuk, pusing mual..."
                 />
                 {queryInput.length > 0 && (
                   <button
@@ -372,8 +589,8 @@ export default function SearchWorkspace({
                 type="submit"
                 className="inline-flex min-h-[52px] items-center justify-center gap-2 whitespace-nowrap rounded-[18px] border-0 bg-primary px-6 py-3 font-heading text-[15px] font-bold text-on-primary shadow-[0_6px_16px_rgba(11,92,171,0.24)] transition duration-150 hover:-translate-y-px hover:bg-primary-hover motion-reduce:transition-none motion-reduce:transform-none"
               >
-                <SearchIcon size={18} />
-                Cari Informasi
+                <span>{personaMode === "evaluator" ? "Lanjut: Pilih Metode" : "Lanjut"}</span>
+                <ChevronRightIcon size={17} />
               </button>
             </div>
           </div>
@@ -412,100 +629,90 @@ export default function SearchWorkspace({
             </div>
           </div>
         </form>
+        </section>
+      )}
 
-        {/* Step 3: Bento Control Dock */}
+      {/* =======================================================
+          TAHAP 2: PILIH METODE & TOP-K
+         ======================================================= */}
+      {wizardStep === 2 && (
         <aside
-          className="flex flex-col gap-3.5 rounded-3xl border border-border bg-surface p-[22px] shadow-[var(--shadow-soft-md)]"
+          className="flex flex-col gap-4 rounded-3xl border border-border bg-surface p-6 shadow-[var(--shadow-soft-md)] md:p-7"
           aria-label="Pilih Metode dan Top-K"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <StepBadge num="3" label="Pilih Metode & Top-K" />
-            <button
-              type="button"
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-surface-subtle px-3.5 py-1.5 text-[12.5px] font-bold text-foreground transition-colors duration-150 hover:border-primary hover:bg-primary-soft motion-reduce:transition-none"
-              aria-pressed={personaMode === "evaluator"}
-              onClick={() => {
-                const next = personaMode === "evaluator" ? "public" : "evaluator";
-                setPersonaMode(next);
-                if (next === "public") {
-                  setReaderTab("detail");
-                  if (model === "bm25") {
-                    setModel("vsm");
-                  }
-                }
-              }}
-            >
-              <SlidersIcon size={14} />
-              {personaMode === "evaluator" ? "Mode: Penguji UAS" : "Mode: Masyarakat Awam"}
-            </button>
+            <StepBadge
+              num="2"
+              label={personaMode === "evaluator" ? "Pilih Metode & Top-K" : "Filter Pencarian (Opsional)"}
+            />
           </div>
 
-          <fieldset className="m-0 min-w-0 border-0 p-0">
-            <legend className="mb-2.5 font-heading text-base font-bold text-ink-strong">
-              Metode Pencarian:
-            </legend>
-            <div className="flex flex-col gap-2">
-              <label
-                className={`relative flex min-h-12 w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border-[1.5px] px-3.5 py-2.5 text-left transition-colors duration-150 has-[:focus-visible]:outline-[2.5px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring motion-reduce:transition-none ${model === "boolean"
-                  ? "border-primary bg-primary-soft shadow-[0_0_0_1px_var(--color-primary)]"
-                  : "border-border bg-surface-subtle hover:border-primary hover:bg-primary-soft"
-                  }`}
-              >
-                <input
-                  type="radio"
-                  name="ir-retrieval-method"
-                  value="boolean"
-                  checked={model === "boolean"}
-                  onChange={() => {
-                    setModel("boolean");
-                    setCurrentPage(1);
-                  }}
-                  className="sr-only"
-                />
-                <span>
-                  <strong className="block text-[13.5px]">Boolean Retrieval</strong>
-                  <span className="text-xs text-muted-foreground">Operator eksak AND, OR, NOT</span>
-                </span>
-                <span
-                  aria-hidden="true"
-                  className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border-2 ${model === "boolean" ? "border-primary" : "border-border"
+          {personaMode === "evaluator" ? (
+            <fieldset className="m-0 min-w-0 border-0 p-0">
+              <legend className="mb-2.5 font-heading text-base font-bold text-ink-strong">
+                Metode Pencarian:
+              </legend>
+              <div className="flex flex-col gap-2">
+                <label
+                  className={`relative flex min-h-12 w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border-[1.5px] px-3.5 py-2.5 text-left transition-colors duration-150 has-[:focus-visible]:outline-[2.5px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring motion-reduce:transition-none ${model === "boolean"
+                    ? "border-primary bg-primary-soft shadow-[0_0_0_1px_var(--color-primary)]"
+                    : "border-border bg-surface-subtle hover:border-primary hover:bg-primary-soft"
                     }`}
                 >
-                  {model === "boolean" && <span className="size-[9px] rounded-full bg-primary" />}
-                </span>
-              </label>
+                  <input
+                    type="radio"
+                    name="ir-retrieval-method"
+                    value="boolean"
+                    checked={model === "boolean"}
+                    onChange={() => {
+                      setModel("boolean");
+                      setCurrentPage(1);
+                    }}
+                    className="sr-only"
+                  />
+                  <span>
+                    <strong className="block text-[13.5px]">Boolean Retrieval</strong>
+                    <span className="text-xs text-muted-foreground">Operator eksak AND, OR, NOT</span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border-2 ${model === "boolean" ? "border-primary" : "border-border"
+                      }`}
+                  >
+                    {model === "boolean" && <span className="size-[9px] rounded-full bg-primary" />}
+                  </span>
+                </label>
 
-              <label
-                className={`relative flex min-h-12 w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border-[1.5px] px-3.5 py-2.5 text-left transition-colors duration-150 has-[:focus-visible]:outline-[2.5px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring motion-reduce:transition-none ${model === "vsm"
-                  ? "border-primary bg-primary-soft shadow-[0_0_0_1px_var(--color-primary)]"
-                  : "border-border bg-surface-subtle hover:border-primary hover:bg-primary-soft"
-                  }`}
-              >
-                <input
-                  type="radio"
-                  name="ir-retrieval-method"
-                  value="vsm"
-                  checked={model === "vsm"}
-                  onChange={() => {
-                    setModel("vsm");
-                    setCurrentPage(1);
-                  }}
-                  className="sr-only"
-                />
-                <span>
-                  <strong className="block text-[13.5px]">Vector Space Model (VSM)</strong>
-                  <span className="text-xs text-muted-foreground">Pembobotan TF-IDF &amp; Cosine Similarity</span>
-                </span>
-                <span
-                  aria-hidden="true"
-                  className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border-2 ${model === "vsm" ? "border-primary" : "border-border"
+                <label
+                  className={`relative flex min-h-12 w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border-[1.5px] px-3.5 py-2.5 text-left transition-colors duration-150 has-[:focus-visible]:outline-[2.5px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring motion-reduce:transition-none ${model === "vsm"
+                    ? "border-primary bg-primary-soft shadow-[0_0_0_1px_var(--color-primary)]"
+                    : "border-border bg-surface-subtle hover:border-primary hover:bg-primary-soft"
                     }`}
                 >
-                  {model === "vsm" && <span className="size-[9px] rounded-full bg-primary" />}
-                </span>
-              </label>
+                  <input
+                    type="radio"
+                    name="ir-retrieval-method"
+                    value="vsm"
+                    checked={model === "vsm"}
+                    onChange={() => {
+                      setModel("vsm");
+                      setCurrentPage(1);
+                    }}
+                    className="sr-only"
+                  />
+                  <span>
+                    <strong className="block text-[13.5px]">Vector Space Model (VSM)</strong>
+                    <span className="text-xs text-muted-foreground">Pembobotan TF-IDF &amp; Cosine Similarity</span>
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={`inline-flex size-[18px] shrink-0 items-center justify-center rounded-full border-2 ${model === "vsm" ? "border-primary" : "border-border"
+                      }`}
+                  >
+                    {model === "vsm" && <span className="size-[9px] rounded-full bg-primary" />}
+                  </span>
+                </label>
 
-              {personaMode === "evaluator" && (
                 <label
                   className={`relative flex min-h-12 w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl border-[1.5px] px-3.5 py-2.5 text-left transition-colors duration-150 has-[:focus-visible]:outline-[2.5px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring motion-reduce:transition-none ${model === "bm25"
                     ? "border-primary bg-primary-soft shadow-[0_0_0_1px_var(--color-primary)]"
@@ -535,14 +742,18 @@ export default function SearchWorkspace({
                     {model === "bm25" && <span className="size-[9px] rounded-full bg-primary" />}
                   </span>
                 </label>
-              )}
-            </div>
-          </fieldset>
+              </div>
+            </fieldset>
+          ) : (
+            <p className="m-0 text-sm text-muted-foreground">
+              Anda bisa menyaring hasil berdasarkan kategori organ tubuh tertentu, atau langsung melihat hasilnya.
+            </p>
+          )}
 
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label htmlFor="topk-dock-select" className="mb-1.5 block text-[12.5px] font-bold text-muted-foreground">
-                Jumlah Hasil:
+                {personaMode === "evaluator" ? "Jumlah Hasil:" : "Tampilkan Maksimal:"}
               </label>
               <select
                 id="topk-dock-select"
@@ -553,9 +764,9 @@ export default function SearchWorkspace({
                   setCurrentPage(1);
                 }}
               >
-                <option value={5}>Top-5</option>
-                <option value={10}>Top-10</option>
-                <option value={15}>Top-15</option>
+                <option value={5}>{personaMode === "evaluator" ? "Top-5" : "5 Penyakit"}</option>
+                <option value={10}>{personaMode === "evaluator" ? "Top-10" : "10 Penyakit"}</option>
+                <option value={15}>{personaMode === "evaluator" ? "Top-15" : "15 Penyakit"}</option>
               </select>
             </div>
 
@@ -581,29 +792,65 @@ export default function SearchWorkspace({
               </select>
             </div>
           </div>
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-muted pt-4">
+            <button
+              type="button"
+              onClick={() => setWizardStep(1)}
+              className={outlineBtnClass}
+            >
+              <ChevronLeftIcon size={16} />
+              <span>{personaMode === "evaluator" ? "Kembali Ubah Kata Kunci" : "Ubah Keluhan"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentPage(1);
+                setSelectedDocId("");
+                setWizardStep(3);
+              }}
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-primary px-6 py-2.5 font-heading text-sm font-bold text-on-primary shadow-[var(--shadow-soft-sm)] transition-colors hover:bg-primary-hover"
+            >
+              <SearchIcon size={16} />
+              <span>{personaMode === "evaluator" ? "Proses & Lihat Hasil" : "Lihat Hasil Pencarian"}</span>
+            </button>
+          </div>
         </aside>
-      </section>
+      )}
 
       {/* =======================================================
-          STEP 4: SISTEM MEMPROSES (LIVE PIPELINE TELEMETRY)
+          TAHAP 3: PROSES, HASIL PENCARIAN & DETAIL DOKUMEN
          ======================================================= */}
-      {submittedQuery.trim().length > 0 && (
+      {wizardStep === 3 && submittedQuery.trim().length > 0 && (
+        <>
+        {personaMode === "evaluator" && (
         <section
           className="flex flex-col gap-2.5 rounded-[18px] border border-border bg-surface px-[18px] py-3.5 shadow-[var(--shadow-soft-sm)]"
           aria-label="Langkah 4 Sistem Memproses Query"
           aria-busy={isProcessing}
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <StepBadge num="4" label="Sistem Memproses" />
-            <span aria-live="polite" className="text-[12.5px] text-muted-foreground">
-              {isProcessing ? (
-                "Memproses..."
-              ) : (
-                <>
-                  Selesai memproses kueri: <code className="mono-code">{submittedQuery}</code>
-                </>
-              )}
-            </span>
+            <StepBadge num="3" label="Sistem Memproses" />
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] font-bold ${
+                  pyEngineActive
+                    ? "bg-safe-badge-bg text-safe-ink"
+                    : "bg-surface-subtle text-muted-foreground"
+                }`}
+              >
+                {pyEngineActive ? "Backend: Python API (127.0.0.1:8000)" : "Backend: Lokal (TS Fallback)"}
+              </span>
+              <span aria-live="polite" className="text-[12.5px] text-muted-foreground">
+                {isProcessing ? (
+                  "Memproses..."
+                ) : (
+                  <>
+                    Selesai memproses kueri: <code className="mono-code">{submittedQuery}</code>
+                  </>
+                )}
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
@@ -655,7 +902,7 @@ export default function SearchWorkspace({
             />
           </div>
         </section>
-      )}
+        )}
 
       {/* EMERGENCY TRIAGE ALERT */}
       {isRedFlag && (
@@ -681,8 +928,6 @@ export default function SearchWorkspace({
       {/* =======================================================
           STEPS 5 & 6: MASTER-DETAIL SPLIT WORKSPACE (FULL-WIDTH DESKTOP & INTERACTIVE MOBILE)
          ======================================================= */}
-      {submittedQuery.trim().length > 0 && (
-        <>
           <div className="flex items-center gap-2 min-[960px]:hidden">
             <button
               type="button"
@@ -710,13 +955,20 @@ export default function SearchWorkspace({
               className="rounded-3xl border border-border bg-surface p-[18px] shadow-[var(--shadow-soft-md)]"
             >
               <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
-                <StepBadge num="5" label={`Lihat Hasil Pencarian (${activeResults.length})`} />
+                <StepBadge
+                  num={personaMode === "evaluator" ? "4" : "3"}
+                  label={
+                    personaMode === "evaluator"
+                      ? `Lihat Hasil Pencarian (${activeResults.length})`
+                      : `Kemungkinan Kondisi (${activeResults.length})`
+                  }
+                />
                 <span className="text-[12.5px] text-muted-foreground">
                   Hal {safePage} dari {totalPages}
                 </span>
               </div>
 
-              {model === "boolean" && booleanResponse && (
+              {personaMode === "evaluator" && model === "boolean" && booleanResponse && (
                 <div className={infoBannerClass}>
                   <strong>Ekspresi Postfix:</strong>{" "}
                   <code className="mono-code">{booleanResponse.postfix_expression.join(" ") || "-"}</code>
@@ -776,7 +1028,11 @@ export default function SearchWorkspace({
                             </div>
 
                             <span className="shrink-0 rounded-full bg-tint-blue-bg px-2.5 py-1 font-mono text-[13px] font-bold text-tint-blue-ink">
-                              {doc.score !== null ? doc.score.toFixed(2) : "Cocok"}
+                              {doc.score !== null
+                                ? personaMode === "evaluator"
+                                  ? doc.score.toFixed(2)
+                                  : `${Math.round(doc.score * 100)}% cocok`
+                                : "Cocok"}
                             </span>
                           </button>
                         </li>
@@ -836,7 +1092,10 @@ export default function SearchWorkspace({
             >
               <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <StepBadge num="6" label="Buka Detail Dokumen" />
+                  <StepBadge
+                    num={personaMode === "evaluator" ? "5" : "4"}
+                    label={personaMode === "evaluator" ? "Buka Detail Dokumen" : "Penjelasan Kondisi"}
+                  />
                   <button
                     type="button"
                     onClick={scrollToResultsList}
@@ -846,7 +1105,9 @@ export default function SearchWorkspace({
                     Daftar Hasil
                   </button>
                 </div>
-                {activeDetailDoc && <span className="mono-code">{activeDetailDoc.doc_id}</span>}
+                {personaMode === "evaluator" && activeDetailDoc && (
+                  <span className="mono-code">{activeDetailDoc.doc_id}</span>
+                )}
               </div>
 
               {personaMode === "evaluator" && (
@@ -908,7 +1169,7 @@ export default function SearchWorkspace({
                             {activeDetailDoc.category}
                           </span>
                           <UrgencyBadge level={activeDetailDoc.urgency_level} />
-                          {activeDetailDoc.tie_breaker_used && (
+                          {personaMode === "evaluator" && activeDetailDoc.tie_breaker_used && (
                             <span className="mono-code">Tie-Breaker</span>
                           )}
                         </div>
@@ -917,8 +1178,14 @@ export default function SearchWorkspace({
                         </h2>
                         {activeDetailDoc.score !== null && (
                           <div className="text-[13px] font-bold text-primary">
-                            Skor Kemiripan ({model === "bm25" ? "BM25" : "Cosine VSM"}):{" "}
-                            {activeDetailDoc.score.toFixed(2)} ({activeDetailDoc.score}) &bull; {activeDetailDoc.overlap_count} term cocok
+                            {personaMode === "evaluator" ? (
+                              <>
+                                Skor Kemiripan ({model === "bm25" ? "BM25" : "Cosine VSM"}):{" "}
+                                {activeDetailDoc.score.toFixed(2)} ({activeDetailDoc.score}) &bull; {activeDetailDoc.overlap_count} term cocok
+                              </>
+                            ) : (
+                              <>Tingkat kecocokan gejala: {Math.round(activeDetailDoc.score * 100)}%</>
+                            )}
                           </div>
                         )}
                       </div>
@@ -926,7 +1193,7 @@ export default function SearchWorkspace({
 
                     <div className="mb-4 rounded-xl border border-muted bg-surface-subtle px-4 py-3.5">
                       <h3 className="m-0 mb-1.5 font-heading text-sm font-bold text-foreground">
-                        Deskripsi Kondisi Medis
+                        {personaMode === "evaluator" ? "Deskripsi Kondisi Medis" : "Penjelasan Singkat"}
                       </h3>
                       <p className="m-0 text-[14.5px] leading-relaxed">
                         {activeDetailDoc.description}
@@ -935,7 +1202,9 @@ export default function SearchWorkspace({
 
                     <div className="mb-4 rounded-xl border border-muted bg-surface-subtle px-4 py-3.5">
                       <h3 className="m-0 mb-1.5 font-heading text-sm font-bold text-foreground">
-                        Gejala Umum &amp; Kata Kunci Cocok
+                        {personaMode === "evaluator"
+                          ? "Gejala Umum & Kata Kunci Cocok"
+                          : "Gejala yang Sering Muncul"}
                       </h3>
                       <p className="m-0 text-[14.5px] leading-[1.65]">
                         {renderHighlightedText(activeDetailDoc.symptoms, [
@@ -947,7 +1216,9 @@ export default function SearchWorkspace({
 
                     <div className="mb-4 rounded-xl border border-safe-badge-border bg-teal-soft px-4 py-3.5">
                       <h3 className="m-0 mb-1.5 font-heading text-sm font-bold text-foreground">
-                        Edukasi Pertolongan Pertama &amp; Penanganan Awal
+                        {personaMode === "evaluator"
+                          ? "Edukasi Pertolongan Pertama & Penanganan Awal"
+                          : "Langkah Penanganan Awal"}
                       </h3>
                       <p className="m-0 text-[14.5px] leading-relaxed">
                         {activeDetailDoc.precaution}
@@ -957,7 +1228,7 @@ export default function SearchWorkspace({
                     <div className="flex flex-col gap-3 rounded-xl border border-border bg-surface px-4 py-3.5 text-[13px]">
                       <div className="flex flex-col gap-1.5">
                         <div>
-                          <strong>Sumber:</strong>{" "}
+                          <strong>Sumber Referensi:</strong>{" "}
                           <a
                             href={activeDetailDoc.source_url}
                             target="_blank"
@@ -967,16 +1238,22 @@ export default function SearchWorkspace({
                           >
                             MedlinePlus &mdash; {activeDetailDoc.source_title}
                           </a>{" "}
-                          <span className="mono-code">{activeDetailDoc.source_id}</span>
+                          {personaMode === "evaluator" && (
+                            <span className="mono-code">{activeDetailDoc.source_id}</span>
+                          )}
                         </div>
-                        <p className="m-0 text-[12.5px] italic leading-normal text-muted-foreground">
-                          &ldquo;{activeDetailDoc.source_excerpt}&rdquo;
-                        </p>
+                        {personaMode === "evaluator" && (
+                          <p className="m-0 text-[12.5px] italic leading-normal text-muted-foreground">
+                            &ldquo;{activeDetailDoc.source_excerpt}&rdquo;
+                          </p>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center justify-end gap-2.5">
-                        <Link href={`/korpus?doc=${activeDetailDoc.doc_id}`} className={outlineBtnClass}>
-                          <span>Lihat di Korpus</span>
-                        </Link>
+                        {personaMode === "evaluator" && (
+                          <Link href={`/korpus?doc=${activeDetailDoc.doc_id}`} className={outlineBtnClass}>
+                            <span>Lihat di Korpus</span>
+                          </Link>
+                        )}
                         <a
                           href={activeDetailDoc.source_url}
                           target="_blank"
@@ -1124,23 +1401,73 @@ export default function SearchWorkspace({
               )}
             </article>
           </section>
+
+          {activeDetailDoc && (
+            <section
+              className="flex flex-wrap items-center justify-between gap-3.5 rounded-3xl border-[1.5px] border-safe-badge-border bg-accent-soft px-[22px] py-[18px] shadow-[var(--shadow-soft-sm)]"
+              aria-label="Langkah 8 Selesai Pencarian"
+            >
+              <div className="flex items-center gap-3.5 text-safe-ink">
+                <span
+                  className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent"
+                  aria-hidden="true"
+                >
+                  <CheckCircleIcon size={24} />
+                </span>
+                <div>
+                  {personaMode === "evaluator" && (
+                    <div className="mb-1">
+                      <StepBadge num="6" label="Selesai!" isDone />
+                    </div>
+                  )}
+                  <div className="text-[15px] font-bold text-ink-strong">
+                    Informasi kesehatan siap dibaca!
+                  </div>
+                  <div className="text-[13px] text-safe-ink">
+                    Anda sedang membaca informasi <strong>{activeDetailDoc.disease_name}</strong> dari sumber MedlinePlus.
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5">
+                {personaMode === "evaluator" && (
+                  <button
+                    type="button"
+                    onClick={() => setWizardStep(4)}
+                    className={outlineBtnClass}
+                  >
+                    <BarChartIcon size={16} />
+                    <span>Lihat Evaluasi (Opsional)</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-full border-0 bg-foreground px-4 py-2 text-[13.5px] font-bold text-on-primary transition-colors duration-150 hover:bg-primary motion-reduce:transition-none"
+                  onClick={handleSearchAgain}
+                >
+                  <RefreshIcon size={16} />
+                  Cari Lagi
+                </button>
+              </div>
+            </section>
+          )}
         </>
       )}
 
       {/* =======================================================
-          STEP 7: LIHAT EVALUASI (OPSIONAL)
+          TAHAP 4: LIHAT EVALUASI (OPSIONAL)
          ======================================================= */}
-      <section
-        className="rounded-3xl border border-border bg-surface px-[22px] py-5 shadow-[var(--shadow-soft-md)]"
-        aria-label="Langkah 7 Ringkasan Evaluasi Sistem"
-      >
+      {wizardStep === 4 && (
+        <section
+          className="rounded-3xl border border-border bg-surface px-[22px] py-5 shadow-[var(--shadow-soft-md)]"
+          aria-label="Langkah 7 Ringkasan Evaluasi Sistem"
+        >
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="mb-1.5">
               <StepBadge num="7" label="Lihat Evaluasi (Opsional)" />
             </div>
             <p className="mt-1 mb-0 text-[13.5px] text-muted-foreground">
-              Hasil benchmark otomatis pada {evalSummary.total_queries_tested} query klinis terhadap {engine.N} dokumen resmi MedlinePlus.
+              Hasil benchmark otomatis pada {activeEvalSummary.total_queries_tested} query klinis terhadap {engine.N} dokumen resmi MedlinePlus.
             </p>
           </div>
           <Link href="/evaluasi" className={outlineBtnClass}>
@@ -1149,53 +1476,38 @@ export default function SearchWorkspace({
           </Link>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <div className="flex flex-col gap-1 rounded-[18px] bg-tint-blue-bg p-4 text-tint-blue-ink">
             <span className="text-[13px] font-bold">Precision@5</span>
-            <span className="font-heading text-[26px] font-extrabold">{evalSummary.mean_precision_at_5.toFixed(2)}</span>
+            <span className="font-heading text-[26px] font-extrabold">{activeEvalSummary.mean_precision_at_5.toFixed(2)}</span>
           </div>
           <div className="flex flex-col gap-1 rounded-[18px] bg-tint-green-bg p-4 text-tint-green-ink">
             <span className="text-[13px] font-bold">Recall@10</span>
-            <span className="font-heading text-[26px] font-extrabold">{evalSummary.mean_recall_at_10.toFixed(2)}</span>
+            <span className="font-heading text-[26px] font-extrabold">{activeEvalSummary.mean_recall_at_10.toFixed(2)}</span>
+          </div>
+          <div className="flex flex-col gap-1 rounded-[18px] bg-primary-soft p-4 text-primary">
+            <span className="text-[13px] font-bold">F1@10</span>
+            <span className="font-heading text-[26px] font-extrabold">{activeEvalSummary.mean_f1_at_10.toFixed(2)}</span>
           </div>
           <div className="flex flex-col gap-1 rounded-[18px] bg-tint-violet-bg p-4 text-tint-violet-ink">
             <span className="text-[13px] font-bold">MAP</span>
-            <span className="font-heading text-[26px] font-extrabold">{evalSummary.mean_average_precision_MAP.toFixed(2)}</span>
+            <span className="font-heading text-[26px] font-extrabold">{activeEvalSummary.mean_average_precision_MAP.toFixed(2)}</span>
           </div>
           <div className="flex flex-col gap-1 rounded-[18px] bg-tint-amber-bg p-4 text-tint-amber-ink">
             <span className="text-[13px] font-bold">MRR</span>
-            <span className="font-heading text-[26px] font-extrabold">{evalSummary.mean_reciprocal_rank_MRR.toFixed(2)}</span>
+            <span className="font-heading text-[26px] font-extrabold">{activeEvalSummary.mean_reciprocal_rank_MRR.toFixed(2)}</span>
           </div>
         </div>
-      </section>
 
-      {/* =======================================================
-          STEP 8: SELESAI! CARI LAGI
-         ======================================================= */}
-      {submittedQuery.trim().length > 0 && activeDetailDoc && (
-        <section
-          className="flex flex-wrap items-center justify-between gap-3.5 rounded-3xl border-[1.5px] border-safe-badge-border bg-accent-soft px-[22px] py-[18px] shadow-[var(--shadow-soft-sm)]"
-          aria-label="Langkah 8 Selesai Pencarian"
-        >
-          <div className="flex items-center gap-3.5 text-safe-ink">
-            <span
-              className="inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent"
-              aria-hidden="true"
-            >
-              <CheckCircleIcon size={24} />
-            </span>
-            <div>
-              <div className="mb-1">
-                <StepBadge num="8" label="Selesai!" isDone />
-              </div>
-              <div className="text-[15px] font-bold text-ink-strong">
-                Informasi yang Anda cari sudah ditemukan!
-              </div>
-              <div className="text-[13px] text-safe-ink">
-                Anda sedang membaca <strong>{activeDetailDoc.disease_name}</strong> dari sumber terverifikasi MedlinePlus.
-              </div>
-            </div>
-          </div>
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-2.5 border-t border-muted pt-4">
+          <button
+            type="button"
+            onClick={() => setWizardStep(3)}
+            className={outlineBtnClass}
+          >
+            <ChevronLeftIcon size={16} />
+            <span>Kembali ke Hasil</span>
+          </button>
           <button
             type="button"
             className="inline-flex min-h-11 items-center gap-2 rounded-full border-0 bg-foreground px-4 py-2 text-[13.5px] font-bold text-on-primary transition-colors duration-150 hover:bg-primary motion-reduce:transition-none"
@@ -1204,6 +1516,7 @@ export default function SearchWorkspace({
             <RefreshIcon size={16} />
             Cari Lagi
           </button>
+        </div>
         </section>
       )}
     </div>

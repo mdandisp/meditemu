@@ -62,8 +62,8 @@ export default function RootLayout({
           >
             <InfoIcon size={18} className="shrink-0" />
             <div>
-              <strong>(Informasi Edukatif) Bukan Diagnosis Medis Langsung:</strong>{" "}
-              Hasil pencarian diurutkan berdasarkan kemiripan teks matematis pada 135 dokumen resmi MedlinePlus (U.S. National Library of Medicine / NIH, Public Domain). Konsultasikan keluhan Anda kepada dokter.
+              <strong>Informasi Edukatif (Bukan Diagnosis Dokter):</strong>{" "}
+              Hasil ini disusun untuk membantu mengenali gejala berdasarkan referensi medis MedlinePlus. Tetap konsultasikan keluhan Anda kepada dokter.
             </div>
           </div>
 
