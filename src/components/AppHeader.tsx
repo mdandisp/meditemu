@@ -51,7 +51,7 @@ export default function AppHeader() {
                 MediTemu
               </span>
               <span className="block text-xs font-medium text-muted-foreground">
-                Medical Information Retrieval System
+                Sistem Temu Kembali Informasi Gejala Medis (Boolean &amp; VSM TF-IDF)
               </span>
             </span>
           </Link>
