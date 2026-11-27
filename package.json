@@ -1,13 +1,14 @@
 {
-  "name": "medisearch-ir-web",
+  "name": "meditemu-ir-web",
   "version": "1.0.0",
   "private": true,
-  "description": "MediTemu: Platform Temu Kembali Informasi Gejala Medis Edukatif (Next.js App Router + Tailwind CSS v4)",
+  "description": "MediTemu: Sistem Temu Kembali Informasi Gejala Medis Berbasis Boolean Retrieval, Vector Space Model (TF-IDF & Cosine Similarity), dan Okapi BM25",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "verify": "node --experimental-strip-types scripts/verify_ir.mjs"
   },
   "dependencies": {
     "next": "^15.3.0",

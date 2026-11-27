@@ -9,7 +9,7 @@ const STOPWORDS = new Set<string>([
   "penderita", "penyakit", "gangguan", "kasus", "seseorang", "orang", "tubuh",
   "bagian", "antara", "lain", "hingga", "sampai", "serta", "juga", "hanya",
   "lebih", "kurang", "sangat", "cukup", "terus", "menerus", "kadang",
-  "dan", "atau", "ini", "itu", "atau", "saat", "ketika", "jika", "bila",
+  "dan", "atau", "ini", "itu", "saat", "ketika", "jika", "bila",
   "namun", "tetapi", "tapi", "ada", "tidak", "bukan", "hari", "bulan", "tahun",
   "setelah", "sebelum", "selama", "tanpa", "melalui", "terhadap", "atas", "bawah"
 ]);
@@ -26,14 +26,13 @@ export const MEDICAL_SLANG_DICT: Record<string, string> = {
   "mual-mual": "mual",
   "muntah-muntah": "muntah",
   "bab": "buang air besar",
-  "bak": "buang air kecil",
-  "kencing": "kencing urine",
-  "panas": "demam tinggi",
+  "bak": "kencing",
+  "buang air kecil": "kencing",
+  "nafas": "napas",
   "menggigil": "gigil",
   "sesek": "sesak",
   "pileg": "pilek",
-  "pilek": "pilek selesma",
-  "flu": "flu influenza",
+  "selesma": "pilek",
   "batuk2": "batuk",
   "batuk-batuk": "batuk",
   "gatel": "gatal",
@@ -43,18 +42,17 @@ export const MEDICAL_SLANG_DICT: Record<string, string> = {
   "lemes": "lemas",
   "pegel": "pegal linu",
   "ngik-ngik": "mengi",
-  "mengi": "mengi wheezing",
   "ambeyen": "wasir hemoroid",
   "mencret": "diare",
   "migren": "migrain",
   "serangan jantung": "infark miokard jantung",
   "usus buntu": "apendisitis usus buntu",
-  "asam urat": "gout arthritis asam urat",
+  "asam urat": "gout arthritis",
   "darah tinggi": "hipertensi",
   "kencing manis": "diabetes melitus",
-  "tbc": "tuberkulosis paru tbc",
-  "tb": "tuberkulosis tbc",
-  "dbd": "demam berdarah dengue dbd"
+  "tbc": "tuberkulosis",
+  "tb": "tuberkulosis",
+  "dbd": "demam berdarah dengue"
 };
 
 // Kata dasar medis yang dilindungi agar tidak ter-stemming secara keliru
@@ -66,9 +64,10 @@ const PROTECTED_ROOTS = new Set<string>([
   "jantung", "napas", "paru", "darah", "infeksi", "virus", "bakteri", "radang",
   "tenggorokan", "amandel", "lambung", "usus", "ginjal", "hati", "saraf", "otot",
   "tulang", "ruam", "pilek", "flu", "influenza", "faringitis", "selesma",
-  "diare", "kejang", "pingsan", "stroke", "alergi",
+  "diare", "kejang", "pingsan", "stroke", "alergi", "kelenjar", "keluhan",
+  "telinga", "hidung", "mulut", "lidah", "pinggang", "punggung", "badan",
   "diabetes", "asma", "vertigo", "migrain", "hepatitis", "malaria", "dengue",
-  "tifoid", "campak", "pandang", "kabur", "telinga", "hidung", "mulut", "lidah"
+  "tifoid", "campak", "pandang", "kabur", "panas", "perih", "sebar", "serang"
 ]);
 
 const STEM_EXCEPTIONS: Record<string, string> = {
@@ -102,7 +101,20 @@ const STEM_EXCEPTIONS: Record<string, string> = {
   "kehilangan": "hilang",
   "hilangnya": "hilang",
   "kelumpuhan": "lumpuh",
-  "kesemutan": "semut"
+  "kesemutan": "semut",
+  "menyebar": "sebar",
+  "menyerang": "serang",
+  "menyebabkan": "sebab",
+  "penyebab": "sebab",
+  "mengeluarkan": "keluar",
+  "menimbulkan": "timbul",
+  "berkurang": "kurang",
+  "berdebar": "debar",
+  "berair": "air",
+  "kelelahan": "lelah",
+  "kecemasan": "cemas",
+  "ketakutan": "takut",
+  "keluhan": "keluh"
 };
 
 export function caseFolding(text: string): string {
@@ -125,7 +137,7 @@ export function normalizeText(text: string, preserveBoolean = false): string {
   if (preserveBoolean) {
     processed = processed.replace(/[^a-z0-9\s()]/g, " ");
   } else {
-    processed = processed.replace(/[^a-z\s]/g, " ");
+    processed = processed.replace(/[^a-z0-9\s]/g, " ");
   }
 
   return processed.replace(/\s+/g, " ").trim();
@@ -164,13 +176,18 @@ export function stemToken(token: string): string {
   // Particle & possessive suffixes
   word = word.replace(/(lah|kah|tah|pun|ku|mu|nya)$/, "");
   if (PROTECTED_ROOTS.has(word)) return word;
+  if (STEM_EXCEPTIONS[word]) return STEM_EXCEPTIONS[word];
 
-  // Derivational prefixes
-  const prefixMatch = word.match(/^(meng|meny|mem|men|me|peng|peny|pem|pen|ber|ter|per|di|ke|se)(.+)$/);
-  if (prefixMatch && prefixMatch[2].length >= 4) {
-    const candidate = prefixMatch[2];
-    if (PROTECTED_ROOTS.has(candidate)) return candidate;
-    word = candidate;
+  // Peluluhan prefiks Bahasa Indonesia (meny- -> s, mem- + vokal -> p/m, men- + vokal -> t/n)
+  if (/^meny[aiueo]/.test(word) && word.length > 6) {
+    word = "s" + word.slice(4);
+  } else {
+    const prefixMatch = word.match(/^(meng|meny|mem|men|me|peng|peny|pem|pen|ber|ter|per|di|ke|se)(.+)$/);
+    if (prefixMatch && prefixMatch[2].length >= 4) {
+      const candidate = prefixMatch[2];
+      if (PROTECTED_ROOTS.has(candidate)) return candidate;
+      word = candidate;
+    }
   }
 
   // Derivational suffixes (-kan, -an, -i)
@@ -180,6 +197,41 @@ export function stemToken(token: string): string {
   }
 
   return word.length >= 3 ? word : lower;
+}
+
+export interface PreprocessOptions {
+  preserveBoolean?: boolean;
+  useNormalization?: boolean;
+  useStopwordRemoval?: boolean;
+  useStemming?: boolean;
+}
+
+export function preprocessWithOptions(text: string, options: PreprocessOptions = {}): string[] {
+  const {
+    preserveBoolean = false,
+    useNormalization = true,
+    useStopwordRemoval = true,
+    useStemming = true
+  } = options;
+
+  let processed = caseFolding(text);
+  if (useNormalization) {
+    processed = normalizeText(processed, preserveBoolean);
+  } else {
+    processed = (preserveBoolean
+      ? processed.replace(/[^a-z0-9\s()]/g, " ")
+      : processed.replace(/[^a-z0-9\s]/g, " ")
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  const tokens = tokenize(processed, preserveBoolean);
+  const afterStop = useStopwordRemoval
+    ? removeStopwords(tokens, preserveBoolean)
+    : tokens.filter((t) => t.length > 1 || t === "(" || t === ")");
+
+  return useStemming ? stemTokens(afterStop, preserveBoolean) : afterStop;
 }
 
 export function stemTokens(tokens: string[], preserveBoolean = false): string[] {
